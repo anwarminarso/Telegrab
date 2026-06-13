@@ -140,7 +140,6 @@ Telegrab/
 │  ├─ Views/                # Pages and modals (login, config, viewers)
 │  └─ Platforms/            # Platform-specific code (Windows active)
 ├─ tests/                   # Test project
-├─ .kiro/                   # Project documentation, steering, and specs
 ├─ Audit.md                 # Technical code audit and hardening backlog
 └─ Planning.md              # Goal-vs-implementation gap analysis and roadmap
 ```
