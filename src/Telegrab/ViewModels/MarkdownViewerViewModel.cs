@@ -21,10 +21,34 @@ public partial class MarkdownViewerViewModel : ObservableObject
 {
     private const string ReadmeFileName = "README.md";
 
+    /// <summary>
+    /// Nama virtual-host yang dipetakan ke folder dokumen aktif pada WebView2 (Windows).
+    /// Tautan media RELATIF di README (mis. <c>file.jpg</c>) di-resolve terhadap
+    /// <see cref="MediaBaseUrl"/> melalui tag <c>&lt;base&gt;</c>, lalu WebView2 menyajikan
+    /// berkasnya dari folder via <c>SetVirtualHostNameToFolderMapping</c>.
+    ///
+    /// Catatan: pendekatan <c>file://</c> TIDAK bekerja di WebView2 — dokumen
+    /// <c>HtmlWebViewSource</c> disajikan dari origin <c>https://appdir/</c> (folder instalasi
+    /// aplikasi), sehingga sumber daya <c>file://</c> diblokir dan tautan relatif ter-resolve ke
+    /// <c>https://appdir/&lt;file&gt;</c> (gambar rusak). Memetakan host virtual ke folder dokumen
+    /// membuat tautan relatif bekerja tanpa mengubah README di disk (tetap relatif &amp; portabel).
+    /// </summary>
+    public const string MediaHostName = "telegrab.media";
+
+    /// <summary>Base URL untuk <see cref="MediaHostName"/> (diakhiri <c>/</c>).</summary>
+    public const string MediaBaseUrl = "https://" + MediaHostName + "/";
+
     private readonly DocumentationService _documentation;
 
     private string _relativeFolder = string.Empty;
     private string _root = string.Empty;
+
+    /// <summary>
+    /// Path absolut folder dokumen aktif (root + relativeFolder), atau <c>null</c> bila belum
+    /// diketahui. Dipakai code-behind untuk memetakan virtual-host ke folder ini dan untuk
+    /// menerjemahkan tautan media kembali ke path berkas saat dibuka di aplikasi luar.
+    /// </summary>
+    public string? FolderAbsolute { get; private set; }
 
     // Disetel oleh LoadAsync agar dipakai ulang oleh preview/save editor (Fase 3).
     private string _readmePath = string.Empty;
@@ -35,6 +59,9 @@ public partial class MarkdownViewerViewModel : ObservableObject
 
     // Debounce render pratinjau saat mengetik (Req 11.1).
     private CancellationTokenSource? _previewCts;
+
+    // True bila sesi edit menandai DocumentationService untuk menahan regenerasi folder ini (4b).
+    private bool _editSuppressionActive;
 
     [ObservableProperty] private string _title = "Documentation";
 
@@ -73,11 +100,14 @@ public partial class MarkdownViewerViewModel : ObservableObject
     /// <summary>True bila WebView penampil (read-only) tampil.</summary>
     [ObservableProperty] private bool _showViewer;
 
-    /// <summary>True bila ada peringatan untuk ditampilkan (mis. edit di dalam blok penanda).</summary>
-    [ObservableProperty] private bool _hasWarning;
+    /// <summary>True bila banner status/peringatan editor perlu ditampilkan.</summary>
+    [ObservableProperty] private bool _showBanner;
 
-    /// <summary>Pesan peringatan/status editor.</summary>
-    [ObservableProperty] private string _warningMessage = string.Empty;
+    /// <summary>Pesan pada banner status/peringatan editor.</summary>
+    [ObservableProperty] private string _bannerMessage = string.Empty;
+
+    /// <summary>True bila banner bersifat PERINGATAN (amber); false bila sukses/info (hijau).</summary>
+    [ObservableProperty] private bool _bannerIsWarning;
 
     /// <summary>Diminta saat modal perlu ditutup.</summary>
     public event Action? CloseRequested;
@@ -106,12 +136,15 @@ public partial class MarkdownViewerViewModel : ObservableObject
     public async Task LoadAsync()
     {
         // Keluar dari mode edit saat (re)load — tampilkan render read-only.
+        EndEditSuppression();
         IsEditing = false;
-        HasWarning = false;
-        WarningMessage = string.Empty;
+        ShowBanner = false;
+        BannerMessage = string.Empty;
+        BannerIsWarning = false;
 
         if (string.IsNullOrWhiteSpace(_root))
         {
+            FolderAbsolute = null;
             ShowEmpty("Folder download belum dikonfigurasi. Atur folder lewat Configuration untuk membuka dokumentasi.");
             CanRebuild = false;
             return;
@@ -120,9 +153,11 @@ public partial class MarkdownViewerViewModel : ObservableObject
         try
         {
             var folderAbs = ResolveFolder(_root, _relativeFolder);
+            FolderAbsolute = folderAbs;
             _readmePath = Path.Combine(folderAbs, ReadmeFileName);
-            // base href = URI folder (diakhiri pemisah) agar tautan media relatif ter-resolve.
-            _baseHref = new Uri(folderAbs + Path.DirectorySeparatorChar).AbsoluteUri;
+            // base href = virtual-host media; WebView2 memetakannya ke folder dokumen sehingga
+            // tautan media relatif (mis. `file.jpg`) ter-resolve & dimuat (lihat MediaHostName).
+            _baseHref = MediaBaseUrl;
 
             if (!File.Exists(_readmePath))
             {
@@ -150,7 +185,13 @@ public partial class MarkdownViewerViewModel : ObservableObject
     private void RenderHtml(string markdown)
     {
         var html = MarkdownHtmlRenderer.Render(markdown, _baseHref);
-        HtmlSource = new HtmlWebViewSource { Html = html };
+
+        // PENTING: setel BaseUrl ke virtual-host media. Bila BaseUrl kosong, MAUI (Windows)
+        // MENYISIPKAN tag <base href="https://appdir/"> di awal <head> — base PERTAMA dalam
+        // dokumen menang, sehingga base milik kita ditimpa & tautan relatif ter-resolve ke
+        // https://appdir/<file> (gambar rusak). Dengan BaseUrl diisi, MAUI tidak menyisipkan
+        // base appdir, dan tautan relatif ter-resolve ke folder dokumen via pemetaan host.
+        HtmlSource = new HtmlWebViewSource { Html = html, BaseUrl = _baseHref };
         HasContent = true;
         IsEmpty = false;
         UpdateChrome();
@@ -183,7 +224,27 @@ public partial class MarkdownViewerViewModel : ObservableObject
 
     /// <summary>Tutup modal.</summary>
     [RelayCommand]
-    private void Close() => CloseRequested?.Invoke();
+    private void Close()
+    {
+        EndEditSuppression();
+        CloseRequested?.Invoke();
+    }
+
+    private void BeginEditSuppression()
+    {
+        if (_editSuppressionActive)
+            return;
+        _documentation.BeginEdit(_relativeFolder);
+        _editSuppressionActive = true;
+    }
+
+    private void EndEditSuppression()
+    {
+        if (!_editSuppressionActive)
+            return;
+        _editSuppressionActive = false;
+        _documentation.EndEdit(_relativeFolder);
+    }
 
     // --- Editor commands (Fase 3, Requirement 11) -------------------------
 
@@ -198,8 +259,10 @@ public partial class MarkdownViewerViewModel : ObservableObject
         if (!HasContent)
             return;
 
-        HasWarning = false;
-        WarningMessage = string.Empty;
+        BeginEditSuppression();
+        ShowBanner = false;
+        BannerMessage = string.Empty;
+        BannerIsWarning = false;
         RawMarkdown = _editBaseline;
         IsEditing = true;
         RenderHtml(_editBaseline); // pratinjau awal = konten saat ini
@@ -226,21 +289,24 @@ public partial class MarkdownViewerViewModel : ObservableObject
 
             if (insideModified)
             {
-                WarningMessage =
+                BannerMessage =
                     "Tersimpan. Catatan: Anda menyunting konten di dalam blok TELEGRAB:BEGIN/END — " +
                     "bagian itu akan tertimpa saat dokumentasi di-regenerate. Tulis catatan Anda di luar penanda agar tetap dipertahankan.";
-                HasWarning = true;
+                BannerIsWarning = true;
+                ShowBanner = true;
             }
             else
             {
-                WarningMessage = "Perubahan tersimpan.";
-                HasWarning = true;
+                BannerMessage = "Perubahan tersimpan.";
+                BannerIsWarning = false;
+                ShowBanner = true;
             }
         }
         catch (Exception ex)
         {
-            WarningMessage = $"Gagal menyimpan: {ex.Message}";
-            HasWarning = true;
+            BannerMessage = $"Gagal menyimpan: {ex.Message}";
+            BannerIsWarning = true;
+            ShowBanner = true;
         }
     }
 

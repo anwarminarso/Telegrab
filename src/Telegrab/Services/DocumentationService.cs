@@ -28,6 +28,13 @@ public sealed class DocumentationService : IDisposable
     private readonly Dictionary<string, Timer> _timers =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // Folder yang sedang disunting di penampil dokumentasi (refcount). Selama nilainya > 0,
+    // regenerasi README ter-debounce (UpdateFolderAsync) DILEWATI agar tidak menimpa berkas di
+    // bawah editor — mencegah race edit vs unduhan selesai (4b). Rebuild eksplisit (aksi
+    // pengguna) tetap dijalankan.
+    private readonly Dictionary<string, int> _editSuppressions =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private bool _disposed;
 
     /// <summary>
@@ -55,6 +62,10 @@ public sealed class DocumentationService : IDisposable
                 return Task.CompletedTask;
 
             var key = NormalizeKey(relativeFolder);
+
+            // Folder sedang disunting: jangan jadwalkan penulisan ulang di bawah editor (4b).
+            if (_editSuppressions.ContainsKey(key))
+                return Task.CompletedTask;
 
             if (_timers.TryGetValue(key, out var existing))
                 existing.Dispose();
@@ -89,6 +100,38 @@ public sealed class DocumentationService : IDisposable
 
         RegenerateFolder(key);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Tandai sebuah folder sedang disunting di penampil dokumentasi. Selama ditandai, regenerasi
+    /// README ter-debounce untuk folder itu DILEWATI (lihat <see cref="UpdateFolderAsync"/>), agar
+    /// tidak menimpa berkas di bawah editor (4b). Berpasangan dengan <see cref="EndEdit"/> (refcount).
+    /// </summary>
+    public void BeginEdit(string relativeFolder)
+    {
+        ArgumentNullException.ThrowIfNull(relativeFolder);
+        var key = NormalizeKey(relativeFolder);
+        lock (_gate)
+        {
+            _editSuppressions.TryGetValue(key, out var n);
+            _editSuppressions[key] = n + 1;
+        }
+    }
+
+    /// <summary>Akhiri penandaan "sedang disunting" untuk sebuah folder (lihat <see cref="BeginEdit"/>).</summary>
+    public void EndEdit(string relativeFolder)
+    {
+        ArgumentNullException.ThrowIfNull(relativeFolder);
+        var key = NormalizeKey(relativeFolder);
+        lock (_gate)
+        {
+            if (!_editSuppressions.TryGetValue(key, out var n))
+                return;
+            if (n <= 1)
+                _editSuppressions.Remove(key);
+            else
+                _editSuppressions[key] = n - 1;
+        }
     }
 
     private void OnDebounceElapsed(string key)

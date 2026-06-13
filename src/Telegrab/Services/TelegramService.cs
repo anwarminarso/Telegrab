@@ -200,19 +200,19 @@ public class TelegramService : IDisposable
     public async Task<MessagePage> GetMessagesAsync(InputPeer peer, int? topicId = null, int offsetId = 0, int limit = 50)
     {
         var history = topicId is int tid
-            ? await Client.Messages_GetReplies(peer, tid, offset_id: offsetId, limit: limit)
-            : await Client.Messages_GetHistory(peer, offset_id: offsetId, limit: limit);
+            ? await Client.Messages_GetReplies(peer, tid, offset_id: offsetId, limit: limit).ConfigureAwait(false)
+            : await Client.Messages_GetHistory(peer, offset_id: offsetId, limit: limit).ConfigureAwait(false);
 
         var page = BuildPage(history.Messages, offsetId);
-        return await ResolvePageCaptionsAsync(page, peer);
+        return await ResolvePageCaptionsAsync(page, peer).ConfigureAwait(false);
     }
 
     /// <summary>Cari pesan berdasarkan teks (Messages_Search), opsional dibatasi ke satu topik.</summary>
     public async Task<MessagePage> SearchMessagesAsync(InputPeer peer, string query, int? topicId = null, int offsetId = 0, int limit = 50)
     {
-        var result = await Client.Messages_Search(peer, query, offset_id: offsetId, limit: limit, top_msg_id: topicId);
+        var result = await Client.Messages_Search(peer, query, offset_id: offsetId, limit: limit, top_msg_id: topicId).ConfigureAwait(false);
         var page = BuildPage(result.Messages, offsetId);
-        return await ResolvePageCaptionsAsync(page, peer);
+        return await ResolvePageCaptionsAsync(page, peer).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -229,8 +229,8 @@ public class TelegramService : IDisposable
         var inputs = ids.Select(id => (InputMessage)new InputMessageID { id = id }).ToArray();
 
         Messages_MessagesBase result = peer is InputPeerChannel ch
-            ? await Client.Channels_GetMessages(new InputChannel(ch.channel_id, ch.access_hash), inputs)
-            : await Client.Messages_GetMessages(inputs);
+            ? await Client.Channels_GetMessages(new InputChannel(ch.channel_id, ch.access_hash), inputs).ConfigureAwait(false)
+            : await Client.Messages_GetMessages(inputs).ConfigureAwait(false);
 
         return result.Messages.OfType<Message>().ToList();
     }
@@ -308,7 +308,7 @@ public class TelegramService : IDisposable
         {
             try
             {
-                var fetched = await FetchMessagesByIdAsync(peer, missingTargets);
+                var fetched = await FetchMessagesByIdAsync(peer, missingTargets).ConfigureAwait(false);
                 foreach (var msg in fetched)
                 {
                     var extra = MapMessage(msg);
@@ -439,6 +439,7 @@ public class TelegramService : IDisposable
         {
             part.MessageId = msg.id;
             part.MessageDate = msg.date;
+            part.GroupedId = msg.grouped_id;
             part.ReplyToMsgId = replyToMsgId;
             part.FromId = fromId;
             part.PostAuthor = postAuthor;

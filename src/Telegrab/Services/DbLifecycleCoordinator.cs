@@ -18,13 +18,24 @@ public sealed class DbLifecycleCoordinator
     private readonly ConfigService _config;
     private readonly ManifestDbService _db;
 
+    /// <summary>
+    /// Dipancarkan SETELAH koneksi DB selesai dialihkan ke root baru (DB sudah ditutup lalu
+    /// dibuka kembali bila valid). Argumen = root baru.
+    ///
+    /// Tujuannya membuat urutan reaksi terhadap penggantian root menjadi EKSPLISIT (B4):
+    /// konsumer UI (mis. <c>MainViewModel</c>) berlangganan event ini — bukan
+    /// <see cref="ConfigService.RootChanged"/> mentah — sehingga dijamin DB sudah siap sebelum
+    /// mereka memuat ulang, tanpa bergantung pada urutan langganan event.
+    /// </summary>
+    public event Action<string>? RootSwitched;
+
     public DbLifecycleCoordinator(ConfigService config, ManifestDbService db)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _db = db ?? throw new ArgumentNullException(nameof(db));
 
-        // Berlangganan perubahan root sejak konstruksi agar penggantian root via modal Config
-        // selalu menutup DB lama lalu membuka/membuat DB di root baru.
+        // Koordinator ini adalah SATU-SATUNYA pelanggan RootChanged mentah. Konsumer lain memakai
+        // RootSwitched agar urutan (tukar DB → reaksi UI) terjamin.
         _config.RootChanged += OnRootChanged;
     }
 
@@ -50,10 +61,12 @@ public sealed class DbLifecycleCoordinator
     {
         _db.Close();
 
-        if (string.IsNullOrWhiteSpace(newRoot))
-            return;
+        if (!string.IsNullOrWhiteSpace(newRoot))
+            OpenIfValid(newRoot);
 
-        OpenIfValid(newRoot);
+        // DB sudah ditukar (ditutup, lalu dibuka kembali bila valid). Baru kabari konsumer UI
+        // agar mereka memuat ulang di atas DB yang sudah benar (B4).
+        RootSwitched?.Invoke(newRoot);
     }
 
     private void OpenIfValid(string root)

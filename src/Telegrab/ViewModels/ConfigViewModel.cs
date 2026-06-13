@@ -18,6 +18,7 @@ namespace Telegrab.ViewModels;
 public partial class ConfigViewModel : ObservableObject
 {
     private readonly ConfigService _config;
+    private readonly DownloadQueueService _queue;
 
     [ObservableProperty] private string _currentRoot = string.Empty;
     [ObservableProperty] private string _statusText = string.Empty;
@@ -25,12 +26,35 @@ public partial class ConfigViewModel : ObservableObject
     /// <summary>True bila status menggambarkan kondisi error/perlu tindakan (untuk pewarnaan UI).</summary>
     [ObservableProperty] private bool _hasError;
 
+    /// <summary>
+    /// True bila modal dibuka dalam mode WAJIB (mis. setelah login & root belum dikonfigurasi).
+    /// Dalam mode ini tombol Close disembunyikan dan modal tidak dapat ditutup sampai sebuah
+    /// folder valid dipilih (Requirement: konfigurasi path mandatory).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowCancel))]
+    private bool _isMandatory;
+
+    /// <summary>True bila tombol Close/Cancel boleh tampil (yaitu mode tidak wajib).</summary>
+    public bool ShowCancel => !IsMandatory;
+
     /// <summary>Diminta saat modal perlu ditutup (root berhasil disimpan atau dibatalkan).</summary>
     public event Action? CloseRequested;
 
-    public ConfigViewModel(ConfigService config)
+    public ConfigViewModel(ConfigService config, DownloadQueueService queue)
     {
         _config = config;
+        _queue = queue;
+        RefreshState();
+    }
+
+    /// <summary>
+    /// Siapkan modal. Bila <paramref name="mandatory"/> true, modal wajib diselesaikan
+    /// (Close disembunyikan) sampai sebuah folder valid dipilih.
+    /// </summary>
+    public void Initialize(bool mandatory)
+    {
+        IsMandatory = mandatory;
         RefreshState();
     }
 
@@ -47,7 +71,9 @@ public partial class ConfigViewModel : ObservableObject
         }
         else
         {
-            StatusText = "Folder download belum dikonfigurasi. Pilih folder untuk mengaktifkan unduhan.";
+            StatusText = IsMandatory
+                ? "Folder download wajib diatur sebelum melanjutkan. Pilih folder untuk mengaktifkan unduhan."
+                : "Folder download belum dikonfigurasi. Pilih folder untuk mengaktifkan unduhan.";
             HasError = true;
         }
     }
@@ -61,6 +87,18 @@ public partial class ConfigViewModel : ObservableObject
     [RelayCommand]
     private async Task ChangeFolderAsync()
     {
+        // B3: jangan ubah root saat masih ada unduhan berjalan/mengantri. Mengganti root akan
+        // menutup DB lama (DbLifecycleCoordinator) sehingga pencatatan manifest unduhan in-flight
+        // gagal dan file bisa tertinggal yatim di root lama. Minta pengguna selesaikan/batalkan
+        // antrian unduh terlebih dahulu.
+        if (_queue.HasActiveWork)
+        {
+            HasError = true;
+            StatusText = "Tidak dapat mengubah folder saat unduhan masih berjalan. " +
+                         "Selesaikan atau batalkan antrian unduh terlebih dahulu.";
+            return;
+        }
+
         try
         {
             var result = await FolderPicker.Default.PickAsync(CancellationToken.None);
@@ -89,9 +127,13 @@ public partial class ConfigViewModel : ObservableObject
         }
     }
 
-    /// <summary>Tutup modal tanpa mengubah konfigurasi (Requirement 2.5).</summary>
+    /// <summary>Tutup modal tanpa mengubah konfigurasi (Requirement 2.5). Diabaikan saat mode wajib.</summary>
     [RelayCommand]
-    private void Cancel() => CloseRequested?.Invoke();
+    private void Cancel()
+    {
+        if (IsMandatory) return; // tidak boleh batal saat mode wajib
+        CloseRequested?.Invoke();
+    }
 
     /// <summary>
     /// Bangun pesan error yang membedakan jenis kegagalan validasi root: folder tidak dapat

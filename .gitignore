@@ -120,3 +120,6 @@ secrets.json
 # AI IDE
 .kiro/
 .cursor/
+
+# Telegrab UI test artifacts (screenshot bukti bug saat test gagal)
+tests/Telegrab.UITests/artifacts/

@@ -29,6 +29,10 @@ public partial class MainPage : ContentPage
 		if (_loaded) return;
 		_loaded = true;
 		await _vm.LoadChatsCommand.ExecuteAsync(null);
+
+		// Setelah login & chat dimuat: bila folder download belum dikonfigurasi, paksa pengguna
+		// mengaturnya lewat modal Configuration (mandatory).
+		_vm.RequestConfigIfNeeded();
 	}
 
 	private async void OnOpenMedia(Models.MediaGalleryRequest request)
@@ -36,9 +40,11 @@ public partial class MainPage : ContentPage
 		await Navigation.PushModalAsync(new MediaViewerPage(request));
 	}
 
-	private async void OnOpenConfig()
+	private async void OnOpenConfig(bool mandatory)
 	{
 		var page = _services.GetRequiredService<ConfigPage>();
+		if (page.BindingContext is ConfigViewModel vm)
+			vm.Initialize(mandatory);
 		await Navigation.PushModalAsync(page);
 	}
 

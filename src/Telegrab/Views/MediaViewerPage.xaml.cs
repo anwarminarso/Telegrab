@@ -68,10 +68,7 @@ public partial class MediaViewerPage : ContentPage
         {
             var p = await _ensure(part);
             if (!string.IsNullOrEmpty(p))
-            {
-                try { Process.Start(new ProcessStartInfo(p) { UseShellExecute = true }); }
-                catch { /* abaikan */ }
-            }
+                OpenExternalFileSafely(p);
             await Navigation.PopModalAsync();
             return;
         }
@@ -125,6 +122,41 @@ public partial class MediaViewerPage : ContentPage
         CounterLabel.Text = hasMany ? $"{_index + 1} / {_items.Count}" : string.Empty;
         PrevButton.IsVisible = hasMany && _index > 0;
         NextButton.IsVisible = hasMany && _index < _items.Count - 1;
+    }
+
+    /// <summary>
+    /// Ekstensi yang berpotensi dieksekusi — file semacam ini JANGAN dijalankan otomatis dari
+    /// sumber tak tepercaya (Telegram). Cukup tampilkan di Explorer agar pengguna memutuskan.
+    /// </summary>
+    private static readonly HashSet<string> RiskyExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".com", ".scr", ".bat", ".cmd", ".ps1", ".psm1", ".msi", ".msp", ".vbs", ".vbe",
+        ".js", ".jse", ".jar", ".wsf", ".wsh", ".hta", ".cpl", ".lnk", ".reg", ".pif", ".dll"
+    };
+
+    private static bool IsRiskyExecutable(string path)
+        => RiskyExtensions.Contains(Path.GetExtension(path));
+
+    /// <summary>
+    /// Buka file non-media dengan aman. Untuk ekstensi berisiko (mis. .exe/.bat/.ps1/.msi/.lnk),
+    /// tampilkan di Explorer (select) alih-alih menjalankannya otomatis; file biasa dibuka dengan
+    /// aplikasi default OS.
+    /// </summary>
+    private static void OpenExternalFileSafely(string path)
+    {
+        try
+        {
+            if (IsRiskyExecutable(path))
+            {
+#if WINDOWS
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+#endif
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch { /* abaikan kegagalan membuka file eksternal */ }
     }
 
     // ---- Auto-hide chrome -------------------------------------------------

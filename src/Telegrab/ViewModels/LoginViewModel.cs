@@ -89,14 +89,14 @@ public partial class LoginViewModel : ObservableObject
             return;
         }
 
-        var account = new AccountConfig
-        {
-            ApiId = ApiId,
-            ApiHash = ApiHash.Trim(),
-            PhoneNumber = PhoneNumber.Trim(),
-            Name = Name.Trim(),
-            DownloadFolder = _configService.Load().DownloadFolder
-        };
+        // Pertahankan konfigurasi yang sudah ada (mis. DownloadRoot) dan hanya
+        // perbarui field kredensial — agar root download yang sudah dipilih TIDAK hilang saat
+        // login ulang (bug: konfigurasi path hilang setelah restart).
+        var account = _configService.Load();
+        account.ApiId = ApiId;
+        account.ApiHash = ApiHash.Trim();
+        account.PhoneNumber = PhoneNumber.Trim();
+        account.Name = Name.Trim();
 
         _configService.Save(account);
         _telegram.Init(account);

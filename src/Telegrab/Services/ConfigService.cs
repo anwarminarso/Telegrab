@@ -15,7 +15,7 @@ public class ConfigService
 
     // Cache di memori agar tidak baca+parse file JSON berulang kali (mis. saat batch download
     // memanggil Load() untuk setiap file). Lock reentrant (Monitor) aman untuk pemanggilan
-    // bertingkat seperti SaveDownloadFolder -> Load/Save.
+    // bertingkat seperti SetDownloadRoot -> Load/Save.
     private readonly object _gate = new();
     private AccountConfig? _cached;
 
@@ -26,9 +26,6 @@ public class ConfigService
     public string AppDataFolder { get; }
     public string ConfigPath { get; }
     public string SessionPath { get; }
-
-    /// <summary>Folder download default jika user belum memilih (folder Downloads Windows).</summary>
-    public string DefaultDownloadFolder { get; }
 
     /// <summary>Root download "strict" saat ini; null bila belum dikonfigurasi (Requirement 1).</summary>
     public string? DownloadRoot
@@ -65,9 +62,6 @@ public class ConfigService
         Directory.CreateDirectory(AppDataFolder);
         ConfigPath = Path.Combine(AppDataFolder, "appsettings.json");
         SessionPath = Path.Combine(AppDataFolder, "session.dat");
-        DefaultDownloadFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Downloads", "Telegrab");
     }
 
     public AccountConfig Load()
@@ -94,9 +88,6 @@ public class ConfigService
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(cfg.DownloadFolder))
-                cfg.DownloadFolder = DefaultDownloadFolder;
-
             _cached = cfg;
             _rootState.Initialize(cfg.DownloadRoot); // sinkronkan state root (tanpa event)
             return _cached;
@@ -111,17 +102,6 @@ public class ConfigService
             File.WriteAllText(ConfigPath, json);
             _cached = config; // jaga cache tetap sinkron dengan isi file
             _rootState.Initialize(config.DownloadRoot); // sinkronkan state (tanpa event)
-        }
-    }
-
-    /// <summary>Perbarui hanya folder download tanpa mengubah kredensial lain.</summary>
-    public void SaveDownloadFolder(string folder)
-    {
-        lock (_gate)
-        {
-            var cfg = Load();
-            cfg.DownloadFolder = folder;
-            Save(cfg);
         }
     }
 

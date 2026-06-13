@@ -33,16 +33,16 @@
                     <!-- API ID -->
                     <Label Text="API ID" Style="{StaticResource FieldLabel}" />
                     <Border Style="{StaticResource InputBorder}">
-                        <Entry Text="{Binding ApiId}" Keyboard="Numeric" Placeholder="e.g. 27887733" />
+                        <Entry AutomationId="ApiIdEntry" Text="{Binding ApiId}" Keyboard="Numeric" Placeholder="e.g. 27887733" />
                     </Border>
 
                     <!-- API Hash + toggle -->
                     <Label Text="API Hash" Style="{StaticResource FieldLabel}" Margin="0,8,0,0" />
                     <Border Style="{StaticResource InputBorder}" Padding="12,0,4,0">
                         <Grid ColumnDefinitions="*,Auto">
-                            <Entry Grid.Column="0" Text="{Binding ApiHash}" Placeholder="32 hex characters"
+                            <Entry Grid.Column="0" AutomationId="ApiHashEntry" Text="{Binding ApiHash}" Placeholder="32 hex characters"
                                    IsPassword="{Binding ShowApiHash, Converter={StaticResource InvertedBool}}" />
-                            <Button Grid.Column="1" Padding="0" WidthRequest="38" HeightRequest="38"
+                            <Button Grid.Column="1" AutomationId="ToggleHashButton" Padding="0" WidthRequest="38" HeightRequest="38"
                                     BackgroundColor="Transparent"
                                     TextColor="{AppThemeBinding Light={StaticResource TextSecondaryLight}, Dark={StaticResource TextSecondaryDark}}"
                                     mi:MauiIcon.Value="{mi:Material Visibility}"
@@ -54,13 +54,13 @@
                     <!-- Nomor HP -->
                     <Label Text="Phone Number" Style="{StaticResource FieldLabel}" Margin="0,8,0,0" />
                     <Border Style="{StaticResource InputBorder}">
-                        <Entry Text="{Binding PhoneNumber}" Keyboard="Telephone" Placeholder="+62812..." />
+                        <Entry AutomationId="PhoneEntry" Text="{Binding PhoneNumber}" Keyboard="Telephone" Placeholder="+62812..." />
                     </Border>
 
                     <!-- Nama -->
                     <Label Text="Name (optional, for new accounts)" Style="{StaticResource FieldLabel}" Margin="0,8,0,0" />
                     <Border Style="{StaticResource InputBorder}">
-                        <Entry Text="{Binding Name}" Placeholder="Display name" />
+                        <Entry AutomationId="NameEntry" Text="{Binding Name}" Placeholder="Display name" />
                     </Border>
 
                     <!-- Bantuan -->
@@ -79,6 +79,7 @@
 
                     <!-- Tombol utama -->
                     <Button Text="Sign In"
+                            AutomationId="SignInButton"
                             Command="{Binding ConnectCommand}"
                             IsEnabled="{Binding IsBusy, Converter={StaticResource InvertedBool}}"
                             Margin="0,16,0,0" />
@@ -107,6 +108,7 @@
                                        Color="{StaticResource Accent}" Margin="0,10,0,0" />
 
                     <Label Text="{Binding Status}" Style="{StaticResource Secondary}"
+                           AutomationId="StatusLabel"
                            IsVisible="{Binding Status, Converter={StaticResource IsNotNull}}"
                            LineBreakMode="WordWrap" Margin="0,8,0,0" />
                 </VerticalStackLayout>

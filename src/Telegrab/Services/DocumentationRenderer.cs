@@ -234,24 +234,66 @@ public static class DocumentationRenderer
         if (label is not null)
             sb.Append(label).Append(Newline);
 
-        // Baris kosong sebelum daftar file.
+        // Baris kosong sebelum galeri media.
         sb.Append(Newline);
 
-        // Daftar file dalam grup.
-        foreach (var media in group)
+        // Galeri media — MARKDOWN NATIF agar README portabel & ter-render benar di penampil
+        // Markdown eksternal (tujuan proyek: arsip yang dapat dibuka di luar aplikasi):
+        //  - Foto  → gambar Markdown `![alt](link "nama · ukuran"){width=180px}`. Beberapa
+        //            gambar ditulis dalam satu paragraf (dipisah spasi) sehingga mengalir &
+        //            membungkus seperti galeri thumbnail. `title` = tooltip hover; `{width}`
+        //            membatasi ukuran (didukung penampil dgn ekstensi atribut, mis. Markdig).
+        //  - Video & File → tautan Markdown biasa dengan ikon + `title` tooltip (tidak ada
+        //            sintaks natif untuk embed video/berkas yang portabel).
+        var images = group.Where(m => IsImage(m.Type)).ToList();
+        var others = group.Where(m => !IsImage(m.Type)).ToList();
+
+        if (images.Count > 0)
         {
-            var fileName = media.FileName ?? string.Empty;
-            var link = BuildRelativeLink(fileName);
-            sb.Append("- [").Append(EscapeInline(fileName)).Append("](").Append(link).Append(')')
-              .Append(" — ").Append(media.Type).Append(" · ").Append(FormatSize(media.Size))
-              .Append(Newline);
+            for (int i = 0; i < images.Count; i++)
+            {
+                if (i > 0)
+                    sb.Append(' ');
+
+                var fileName = images[i].FileName ?? string.Empty;
+                var link = BuildRelativeLink(fileName);
+                sb.Append("![").Append(EscapeLinkText(fileName)).Append("](").Append(link)
+                  .Append(" \"").Append(EscapeTitle($"{fileName} · {FormatSize(images[i].Size)}"))
+                  .Append("\"){width=180px}");
+            }
+            sb.Append(Newline);
         }
 
-        // Catatan tambahan (case 8) bila ada.
+        if (others.Count > 0)
+        {
+            if (images.Count > 0)
+                sb.Append(Newline); // pisahkan galeri gambar dari daftar tautan
+
+            foreach (var media in others)
+            {
+                var fileName = media.FileName ?? string.Empty;
+                var link = BuildRelativeLink(fileName);
+                var icon = IsVideo(media.Type) ? "🎬" : "📄";
+                sb.Append("- ").Append(icon).Append(" [").Append(EscapeLinkText(fileName)).Append("](")
+                  .Append(link).Append(" \"").Append(EscapeTitle($"{fileName} · {FormatSize(media.Size)}"))
+                  .Append("\") — ").Append(media.Type).Append(" · ").Append(FormatSize(media.Size))
+                  .Append(Newline);
+            }
+        }
+
+        // Catatan tambahan (case 8) bila ada — dipisah baris kosong agar blockquote ter-parse.
         var note = Normalize(head.Note);
         if (!string.IsNullOrEmpty(note))
-            sb.Append("> catatan: ").Append(note).Append(Newline);
+            sb.Append(Newline).Append("> catatan: ").Append(note).Append(Newline);
     }
+
+    /// <summary>Tipe media foto (kolom <c>type</c> == "Photo", case-insensitive).</summary>
+    private static bool IsImage(string? type) =>
+        string.Equals(type, "Photo", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Tipe media video (kolom <c>type</c> == "Video", case-insensitive).</summary>
+    private static bool IsVideo(string? type) =>
+        string.Equals(type, "Video", StringComparison.OrdinalIgnoreCase);
 
     private static string? SourceLabel(CaptionSource source, string caption)
     {
@@ -290,6 +332,36 @@ public static class DocumentationRenderer
     {
         // Tautan relatif di dalam folder yang sama: cukup nama file, dengan spasi di-encode.
         return Uri.EscapeDataString(fileName).Replace("%2F", "/");
+    }
+
+    /// <summary>
+    /// Escape teks tautan/alt Markdown: backslash dan kurung siku agar tidak merusak sintaks
+    /// <c>[...]</c>. Newline/pipe juga dinormalkan via <see cref="EscapeInline"/>.
+    /// </summary>
+    private static string EscapeLinkText(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+        return EscapeInline(value)
+            .Replace("\\", "\\\\")
+            .Replace("[", "\\[")
+            .Replace("]", "\\]");
+    }
+
+    /// <summary>
+    /// Escape judul tautan Markdown (di dalam <c>"..."</c>): ganti tanda kutip ganda jadi
+    /// kutip tunggal &amp; ratakan newline agar judul tetap satu baris.
+    /// </summary>
+    private static string EscapeTitle(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+        return value
+            .Replace("\r\n", " ")
+            .Replace('\r', ' ')
+            .Replace('\n', ' ')
+            .Replace('"', '\'')
+            .Trim();
     }
 
     private static string FormatSize(long bytes)

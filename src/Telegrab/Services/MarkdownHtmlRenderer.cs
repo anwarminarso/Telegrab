@@ -20,10 +20,11 @@ public static class MarkdownHtmlRenderer
     /// Render <paramref name="markdown"/> menjadi dokumen HTML lengkap dengan styling dasar
     /// yang nyaman dibaca (font, lebar maksimum, ramah mode gelap/terang).
     ///
-    /// Bila <paramref name="baseHref"/> diberikan (URI <c>file://</c> absolut ke folder dokumen,
-    /// diakhiri pemisah), sebuah tag <c>&lt;base&gt;</c> disisipkan sehingga tautan media relatif
-    /// di README (mis. <c>[file](file.jpg)</c>) ter-resolve ke path absolut yang benar
-    /// (Requirement 10.2).
+    /// Bila <paramref name="baseHref"/> diberikan (URL absolut diakhiri pemisah), sebuah tag
+    /// <c>&lt;base&gt;</c> disisipkan sehingga tautan media relatif di README
+    /// (mis. <c>[file](file.jpg)</c>) ter-resolve ke base tersebut. Penampil in-app memakai
+    /// virtual-host (mis. <c>https://telegrab.media/</c>) yang dipetakan ke folder dokumen oleh
+    /// WebView2; README di disk tetap memakai path relatif agar portabel (Requirement 10.2).
     /// </summary>
     public static string Render(string? markdown, string? baseHref = null)
     {
@@ -70,7 +71,8 @@ public static class MarkdownHtmlRenderer
         pre code { background: none; padding: 0; }
         blockquote { margin: 0.8em 0; padding: 0.2em 1em; border-left: 3px solid rgba(127,127,127,0.4);
                      color: #555; }
-        img { max-width: 100%; height: auto; border-radius: 8px; }
+        img { max-width: 100%; height: auto; border-radius: 8px; vertical-align: top; margin: 0 4px 4px 0; }
+        video { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0.5em 0; }
         table { border-collapse: collapse; width: 100%; margin: 1em 0; }
         th, td { border: 1px solid rgba(127,127,127,0.35); padding: 6px 10px; text-align: left; }
         hr { border: none; border-top: 1px solid rgba(127,127,127,0.3); margin: 1.5em 0; }

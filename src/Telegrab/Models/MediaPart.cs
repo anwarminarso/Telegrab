@@ -21,6 +21,13 @@ public partial class MediaPart : ObservableObject
     /// <summary>Tanggal pesan asal (untuk prefiks nama file).</summary>
     public DateTime MessageDate { get; set; }
 
+    /// <summary>
+    /// Id album Telegram (<c>grouped_id</c>) pesan asal; 0 bila media bukan bagian album.
+    /// Dibawa hingga ke manifest agar <see cref="Telegrab.Services.DocumentationRenderer"/>
+    /// dapat menggabungkan anggota album menjadi satu post di README.
+    /// </summary>
+    public long GroupedId { get; set; }
+
     /// <summary>Id unik media di Telegram (id foto atau dokumen). Stabil antar sesi.</summary>
     public long MediaId => Photo?.id ?? Document?.id ?? 0;
 

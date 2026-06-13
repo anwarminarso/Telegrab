@@ -63,7 +63,11 @@ public sealed class ManifestDbService : IDisposable
             Directory.CreateDirectory(fullRoot);
 
             var dbPath = Path.Combine(fullRoot, DbFileName);
-            var connection = new SqliteConnection($"Data Source={dbPath}");
+            // Pooling=False: aplikasi memakai SATU koneksi long-lived sehingga pooling tak memberi
+            // manfaat, sementara pooling membuat file DB tetap terkunci setelah Close (dahulu butuh
+            // SqliteConnection.ClearAllPools() yang global/seluruh proses). Tanpa pooling, Close/
+            // Dispose langsung melepas handle file — penting untuk ganti root & pembersihan test.
+            var connection = new SqliteConnection($"Data Source={dbPath};Pooling=False");
             connection.Open();
 
             _connection = connection;
@@ -101,10 +105,18 @@ public sealed class ManifestDbService : IDisposable
     /// </summary>
     public bool IsDownloaded(long chatId, int messageId, long mediaId, out string absolutePath)
     {
+        absolutePath = string.Empty;
+
+        string root;
+        string? relativePath;
+
+        // Hanya query DB yang dikunci. File.Exists (IO disk) sengaja dijalankan DI LUAR lock agar
+        // tidak menahan operasi DB lain — mis. regenerasi dokumentasi (QueryFolder di thread pool)
+        // vs pemuatan pesan UI yang memanggil method ini (P2).
         lock (_gate)
         {
-            absolutePath = string.Empty;
             var connection = RequireConnection();
+            root = _root!;
 
             using var command = connection.CreateCommand();
             command.CommandText =
@@ -115,13 +127,14 @@ public sealed class ManifestDbService : IDisposable
             command.Parameters.AddWithValue("$messageId", messageId);
             command.Parameters.AddWithValue("$mediaId", mediaId);
 
-            var relativePath = command.ExecuteScalar() as string;
-            if (string.IsNullOrEmpty(relativePath))
-                return false;
-
-            absolutePath = ResolveAbsolute(relativePath);
-            return File.Exists(absolutePath);
+            relativePath = command.ExecuteScalar() as string;
         }
+
+        if (string.IsNullOrEmpty(relativePath))
+            return false;
+
+        absolutePath = ResolveAbsolute(root, relativePath);
+        return File.Exists(absolutePath);
     }
 
     /// <summary>
@@ -202,10 +215,17 @@ public sealed class ManifestDbService : IDisposable
     /// </summary>
     public IReadOnlyList<MediaRecord> QueryFolder(string relativeFolder)
     {
+        var folder = NormalizeFolder(relativeFolder);
+
+        string root;
+        var raw = new List<MediaRecord>();
+
+        // Baca baris di dalam lock; filter "anak langsung" + File.Exists (IO disk) dilakukan
+        // DI LUAR lock agar tidak menahan operasi DB lain saat men-stat banyak file (P2).
         lock (_gate)
         {
             var connection = RequireConnection();
-            var folder = NormalizeFolder(relativeFolder);
+            root = _root!;
 
             using var command = connection.CreateCommand();
             if (folder.Length == 0)
@@ -221,26 +241,27 @@ public sealed class ManifestDbService : IDisposable
                 command.Parameters.AddWithValue("$prefix", EscapeLike(folder) + "/%");
             }
 
-            var results = new List<MediaRecord>();
             using var reader = command.ExecuteReader();
             while (reader.Read())
-            {
-                var record = ReadRecord(reader);
-
-                // Anak langsung: direktori dari relative_path harus persis == folder yang diminta.
-                var parent = NormalizeFolder(GetDirectory(record.RelativePath));
-                if (!string.Equals(parent, folder, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                // Konsistensi disk↔dok: hanya file yang masih ada.
-                if (!File.Exists(ResolveAbsolute(record.RelativePath)))
-                    continue;
-
-                results.Add(record);
-            }
-
-            return results;
+                raw.Add(ReadRecord(reader));
         }
+
+        var results = new List<MediaRecord>();
+        foreach (var record in raw)
+        {
+            // Anak langsung: direktori dari relative_path harus persis == folder yang diminta.
+            var parent = NormalizeFolder(GetDirectory(record.RelativePath));
+            if (!string.Equals(parent, folder, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Konsistensi disk↔dok: hanya file yang masih ada.
+            if (!File.Exists(ResolveAbsolute(root, record.RelativePath)))
+                continue;
+
+            results.Add(record);
+        }
+
+        return results;
     }
 
     // --- Helper internal ---------------------------------------------------
@@ -307,15 +328,12 @@ public sealed class ManifestDbService : IDisposable
             {
                 _connection = null;
                 _root = null;
-                // Bersihkan pool agar file DB tidak terkunci (penting untuk ganti root / cleanup test).
-                SqliteConnection.ClearAllPools();
             }
         }
     }
 
-    private string ResolveAbsolute(string relativePath)
+    private static string ResolveAbsolute(string root, string relativePath)
     {
-        var root = _root ?? throw new InvalidOperationException("Root belum diset.");
         return Path.GetFullPath(Path.Combine(root, NormalizeToOsSeparator(relativePath)));
     }
 

@@ -31,8 +31,28 @@ public partial class DownloadQueueService : ObservableObject
     private CancellationTokenSource? _autoClearCts;
     private const int AutoClearDelaySeconds = 4;
 
+    // P4: batasi jumlah job "selesai" (Completed/Skipped) yang ditahan di daftar UI agar tidak
+    // tumbuh tanpa batas pada batch besar (mis. unduh ribuan media). Job yang dipangkas tetap
+    // dihitung lewat _prunedDone sehingga ringkasan tetap akurat.
+    private const int MaxFinishedRetained = 100;
+    private int _prunedDone;
+
+    // Kunci per-media untuk menserialkan unduhan media yang SAMA (B2). Tanpa ini, worker antrian
+    // dan unduhan langsung (tombol/viewer) dapat memproses MediaPart yang sama secara paralel dan
+    // sama-sama File.Create() path tujuan yang identik → sharing violation / file saling terhapus
+    // (lihat penanganan TryDelete di TelegramService.DownloadToPathAsync). Refcount dipakai agar
+    // entri dilepas saat tak ada lagi pemakai (mencegah dictionary tumbuh tanpa batas).
+    private readonly object _keyGate = new();
+    private readonly Dictionary<string, KeyLock> _keyLocks = new();
+
     /// <summary>Semua job (antri/proses/selesai) untuk ditampilkan di UI.</summary>
     public ObservableCollection<DownloadJob> Jobs { get; } = new();
+
+    /// <summary>
+    /// True bila masih ada pekerjaan unduh yang berjalan atau mengantri (B3). Dipakai untuk
+    /// memblokir penggantian root download selama unduhan aktif. Dibaca di UI thread.
+    /// </summary>
+    public bool HasActiveWork => Jobs.Any(j => j.IsActive || j.State == DownloadState.Queued);
 
     [ObservableProperty] private bool _hasJobs;
     [ObservableProperty] private bool _isRunning;
@@ -74,6 +94,9 @@ public partial class DownloadQueueService : ObservableObject
         foreach (var part in parts)
         {
             if (part.IsDownloaded) continue;
+            // MediaId == 0 = sentinel (tak ada id foto/dokumen). Tidak dapat dilacak andal di
+            // manifest (kunci chat,message,media bisa bertabrakan), jadi dilewati.
+            if (part.MediaId == 0) continue;
             if (_db.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
             {
                 part.IsDownloaded = true;
@@ -105,6 +128,7 @@ public partial class DownloadQueueService : ObservableObject
             if (!Jobs[i].CanCancel)
                 Jobs.RemoveAt(i);
         }
+        _prunedDone = 0; // view dibersihkan: reset hitungan yang sudah dipangkas (P4)
         RefreshSummary();
     }
 
@@ -120,6 +144,7 @@ public partial class DownloadQueueService : ObservableObject
             if (s is DownloadState.Completed or DownloadState.Skipped or DownloadState.Canceled)
                 Jobs.RemoveAt(i);
         }
+        _prunedDone = 0; // view dibersihkan: reset hitungan yang sudah dipangkas (P4)
         RefreshSummary();
     }
 
@@ -203,37 +228,89 @@ public partial class DownloadQueueService : ObservableObject
         // Strict gating: tolak unduhan bila DB manifest belum siap (root belum valid).
         EnsureReady();
 
-        // Sudah ada? lewati (idempotent).
-        if (_db.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
+        // Serialkan per-media (B2): cegah worker antrian & unduhan langsung memproses media yang
+        // sama secara paralel. Kunci memakai identitas manifest (chat, message, media).
+        var lockKey = $"{ctx.ChatId}:{part.MessageId}:{part.MediaId}";
+        var keyLock = AcquireKeyLock(lockKey);
+        bool locked = false;
+        try
         {
-            ApplyDownloaded(part, existing);
-            if (job != null) UpdateJob(job, j => j.State = DownloadState.Skipped);
-            return existing;
+            await keyLock.Semaphore.WaitAsync(ct);
+            locked = true;
+
+            // Sudah ada? lewati (idempotent). Dicek DI DALAM kunci agar pemenang lomba mencatat
+            // manifest dan pesaingnya melihatnya sebagai "sudah diunduh" alih-alih menulis ulang.
+            if (_db.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
+            {
+                ApplyDownloaded(part, existing);
+                if (job != null) UpdateJob(job, j => j.State = DownloadState.Skipped);
+                return existing;
+            }
+
+            var root = Root;
+            var target = _telegram.BuildTargetPath(root, ctx, part);
+
+            void OnFlood(int seconds)
+            {
+                if (job != null) UpdateJob(job, j => { j.State = DownloadState.FloodWait; j.FloodWaitSeconds = seconds; });
+            }
+
+            var path = await _telegram.DownloadToPathAsync(part, target, progress, OnFlood, ct);
+
+            // Catat ke DB manifest (sumber kebenaran). relative_path disimpan relatif terhadap
+            // root tempat DB berada, dinormalkan ke pemisah '/' untuk portabilitas.
+            var record = BuildRecord(ctx, part, root, path);
+            _db.Mark(record);
+
+            // Picu regenerasi README.md untuk folder media (di-debounce agar batch unduh tidak
+            // menulis README berkali-kali). Folder diturunkan dari relative_path yang baru dicatat
+            // sehingga selalu konsisten dengan lokasi file di disk (Requirement 9.1).
+            var relativeFolder = GetRelativeFolder(record.RelativePath);
+            _ = _documentation.UpdateFolderAsync(relativeFolder);
+
+            ApplyDownloaded(part, path);
+            return path;
         }
-
-        var root = Root;
-        var target = _telegram.BuildTargetPath(root, ctx, part);
-
-        void OnFlood(int seconds)
+        finally
         {
-            if (job != null) UpdateJob(job, j => { j.State = DownloadState.FloodWait; j.FloodWaitSeconds = seconds; });
+            if (locked) keyLock.Semaphore.Release();
+            ReleaseKeyLock(lockKey, keyLock);
         }
+    }
 
-        var path = await _telegram.DownloadToPathAsync(part, target, progress, OnFlood, ct);
+    /// <summary>Ambil (atau buat) kunci per-media dan naikkan refcount-nya.</summary>
+    private KeyLock AcquireKeyLock(string key)
+    {
+        lock (_keyGate)
+        {
+            if (!_keyLocks.TryGetValue(key, out var kl))
+            {
+                kl = new KeyLock();
+                _keyLocks[key] = kl;
+            }
+            kl.RefCount++;
+            return kl;
+        }
+    }
 
-        // Catat ke DB manifest (sumber kebenaran). relative_path disimpan relatif terhadap
-        // root tempat DB berada, dinormalkan ke pemisah '/' untuk portabilitas.
-        var record = BuildRecord(ctx, part, root, path);
-        _db.Mark(record);
+    /// <summary>Turunkan refcount kunci; lepas &amp; buang saat tak ada lagi pemakai.</summary>
+    private void ReleaseKeyLock(string key, KeyLock keyLock)
+    {
+        lock (_keyGate)
+        {
+            if (--keyLock.RefCount <= 0)
+            {
+                _keyLocks.Remove(key);
+                keyLock.Semaphore.Dispose();
+            }
+        }
+    }
 
-        // Picu regenerasi README.md untuk folder media (di-debounce agar batch unduh tidak
-        // menulis README berkali-kali). Folder diturunkan dari relative_path yang baru dicatat
-        // sehingga selalu konsisten dengan lokasi file di disk (Requirement 9.1).
-        var relativeFolder = GetRelativeFolder(record.RelativePath);
-        _ = _documentation.UpdateFolderAsync(relativeFolder);
-
-        ApplyDownloaded(part, path);
-        return path;
+    /// <summary>Kunci eksklusif per-media (semaphore biner) + refcount untuk pembersihan.</summary>
+    private sealed class KeyLock
+    {
+        public SemaphoreSlim Semaphore { get; } = new(1, 1);
+        public int RefCount;
     }
 
     /// <summary>
@@ -261,8 +338,9 @@ public partial class DownloadQueueService : ObservableObject
             ChatId = ctx.ChatId,
             MessageId = part.MessageId,
             MediaId = part.MediaId,
-            // MediaPart tidak membawa grouped_id; group_id null bila tak tersedia (lihat task 9).
-            GroupId = null,
+            // group_id album diturunkan dari grouped_id pesan (B1) agar DocumentationRenderer
+            // dapat menggabungkan anggota album menjadi satu post. null bila bukan bagian album.
+            GroupId = part.GroupedId != 0 ? part.GroupedId : null,
             ChatTitle = ctx.ChatTitle,
             TopicTitle = ctx.TopicTitle,
             RelativePath = relativePath,
@@ -311,7 +389,10 @@ public partial class DownloadQueueService : ObservableObject
     {
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            int done = Jobs.Count(j => j.State is DownloadState.Completed or DownloadState.Skipped);
+            // Pangkas job selesai yang melebihi batas agar daftar UI tidak tumbuh tanpa batas (P4).
+            PruneFinishedOverflow();
+
+            int done = _prunedDone + Jobs.Count(j => j.State is DownloadState.Completed or DownloadState.Skipped);
             int failed = Jobs.Count(j => j.State == DownloadState.Failed);
             int pending = Jobs.Count(j => j.State == DownloadState.Queued);
             int active = Jobs.Count(j => j.IsActive);
@@ -334,6 +415,37 @@ public partial class DownloadQueueService : ObservableObject
             if (idle && hasClearable) ScheduleAutoClear();
             else CancelAutoClear();
         });
+    }
+
+    /// <summary>
+    /// Pangkas job selesai (Completed/Skipped) terlama bila jumlahnya melampaui
+    /// <see cref="MaxFinishedRetained"/> (P4). Job GAGAL dan dibatalkan dipertahankan agar tetap
+    /// terlihat. Setiap job yang dipangkas dihitung di <see cref="_prunedDone"/> supaya ringkasan
+    /// tetap akurat. Dipanggil dari <see cref="RefreshSummary"/> (UI thread).
+    /// </summary>
+    private void PruneFinishedOverflow()
+    {
+        int finished = 0;
+        for (int i = 0; i < Jobs.Count; i++)
+            if (Jobs[i].State is DownloadState.Completed or DownloadState.Skipped)
+                finished++;
+
+        int overflow = finished - MaxFinishedRetained;
+        if (overflow <= 0) return;
+
+        for (int i = 0; i < Jobs.Count && overflow > 0;)
+        {
+            if (Jobs[i].State is DownloadState.Completed or DownloadState.Skipped)
+            {
+                Jobs.RemoveAt(i);
+                _prunedDone++;
+                overflow--;
+            }
+            else
+            {
+                i++;
+            }
+        }
     }
 
     private void CancelAutoClear()

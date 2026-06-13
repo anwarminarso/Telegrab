@@ -46,6 +46,7 @@
                             SemanticProperties.Description="Pick a new download root folder" />
                     <Button Grid.Column="1" Text="Close" Style="{StaticResource GhostButton}"
                             Command="{Binding CancelCommand}"
+                            IsVisible="{Binding ShowCancel}"
                             SemanticProperties.Description="Close configuration without changes" />
                 </Grid>
             </VerticalStackLayout>

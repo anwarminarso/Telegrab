@@ -16,6 +16,7 @@ public partial class MainViewModel : ObservableObject
     private readonly DownloadQueueService _queue;
     private readonly ManifestDbService _db;
     private readonly DocumentationService _documentation;
+    private readonly DbLifecycleCoordinator _dbLifecycle;
     private CancellationTokenSource? _thumbCts;
     private CancellationTokenSource? _chatThumbCts;
     private readonly List<ChatItem> _allChats = new();
@@ -24,6 +25,9 @@ public partial class MainViewModel : ObservableObject
     private TopicItem? _activeTopic;
 
     private const int PageSize = 50;
+
+    /// <summary>Maksimum unduhan thumbnail yang berjalan bersamaan (P3: paralel terbatas).</summary>
+    private const int ThumbnailConcurrency = 4;
     private TL.InputPeer? _currentPeer;
     private int? _currentTopicId;
     private int _oldestId;
@@ -59,25 +63,81 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Diminta saat media siap ditampilkan di viewer (dengan navigasi galeri).</summary>
     public event Action<MediaGalleryRequest>? OpenMediaRequested;
 
-    /// <summary>Diminta saat modal Configuration perlu dibuka (ikon header / gating unduh).</summary>
-    public event Action? OpenConfigRequested;
+    /// <summary>Diminta saat modal Configuration perlu dibuka. Argumen: true bila WAJIB (mandatory).</summary>
+    public event Action<bool>? OpenConfigRequested;
 
     /// <summary>Diminta saat penampil dokumentasi (README.md) perlu dibuka untuk konteks aktif.</summary>
     public event Action<DocumentationRequest>? OpenDocumentationRequested;
 
     public MainViewModel(TelegramService telegram, ConfigService config,
         DownloadQueueService queue, ManifestDbService db,
-        DocumentationService documentation)
+        DocumentationService documentation, DbLifecycleCoordinator dbLifecycle)
     {
         _telegram = telegram;
         _config = config;
         _queue = queue;
         _db = db;
         _documentation = documentation;
+        _dbLifecycle = dbLifecycle;
 
         // Folder bar mencerminkan root download "strict" (sumber kebenaran kini ConfigService.DownloadRoot).
         _downloadFolder = _config.DownloadRoot ?? string.Empty;
-        _config.RootChanged += path => DownloadFolder = path;
+
+        // Saat root diganti (lewat modal Configuration): reload main page agar DB, status unduhan,
+        // dan tampilan kembali normal untuk root baru. Berlangganan RootSwitched (BUKAN
+        // ConfigService.RootChanged) agar dijamin DB sudah dialihkan DbLifecycleCoordinator
+        // sebelum reload berjalan — urutan eksplisit, tidak bergantung urutan langganan (B4).
+        _dbLifecycle.RootSwitched += OnRootChanged;
+    }
+
+    private void OnRootChanged(string newRoot)
+    {
+        MainThread.BeginInvokeOnMainThread(async () =>
+        {
+            try { await ReloadForNewRootAsync(newRoot); }
+            catch (Exception ex) { Status = $"Reload failed: {ex.Message}"; }
+        });
+    }
+
+    /// <summary>
+    /// Reset penuh tampilan main page lalu muat ulang daftar chat, agar semuanya mengikuti root
+    /// download yang baru (DB sudah dialihkan oleh DbLifecycleCoordinator).
+    /// </summary>
+    private async Task ReloadForNewRootAsync(string newRoot)
+    {
+        DownloadFolder = newRoot;
+
+        // Bersihkan antrian & pekerjaan lama yang menunjuk root sebelumnya.
+        _queue.CancelAll();
+        _queue.ClearFinished();
+
+        _thumbCts?.Cancel();
+
+        // Reset state pemilihan & daftar pesan.
+        Messages.Clear();
+        _currentPeer = null;
+        _currentTopicId = null;
+        _currentQuery = null;
+        SearchQuery = string.Empty;
+        if (_activeChat != null) { _activeChat.IsActive = false; _activeChat = null; }
+        if (_activeTopic != null) { _activeTopic.IsActive = false; _activeTopic = null; }
+        CurrentTitle = "Select a chat or topic";
+        HasMore = false;
+        AllLoaded = false;
+        _oldestId = 0;
+
+        // Muat ulang daftar chat (login tetap aktif).
+        await LoadChatsAsync();
+    }
+
+    /// <summary>
+    /// Dipanggil saat main page muncul: bila root download belum dikonfigurasi, buka modal
+    /// Configuration dalam mode WAJIB (mandatory) sehingga pengguna harus memilih folder dulu.
+    /// </summary>
+    public void RequestConfigIfNeeded()
+    {
+        if (!_config.IsRootConfigured)
+            OpenConfigRequested?.Invoke(true);
     }
 
     [RelayCommand]
@@ -126,16 +186,33 @@ public partial class MainViewModel : ObservableObject
 
     private async Task LoadChatThumbnailsAsync(IReadOnlyList<ChatItem> chats, CancellationToken token)
     {
-        foreach (var c in chats)
+        var targets = chats.Where(c => c.Thumbnail == null && c.PeerInfo != null).ToList();
+        if (targets.Count == 0) return;
+
+        // Paralel terbatas (P3): unduh beberapa thumbnail sekaligus, bukan satu-per-satu.
+        using var gate = new SemaphoreSlim(ThumbnailConcurrency);
+        var tasks = targets.Select(c => LoadOneChatThumbnailAsync(c, gate, token));
+        try { await Task.WhenAll(tasks); }
+        catch (OperationCanceledException) { /* dibatalkan: abaikan */ }
+    }
+
+    private async Task LoadOneChatThumbnailAsync(ChatItem chat, SemaphoreSlim gate, CancellationToken token)
+    {
+        try { await gate.WaitAsync(token); }
+        catch (OperationCanceledException) { return; }
+        try
         {
             if (token.IsCancellationRequested) return;
-            if (c.Thumbnail != null || c.PeerInfo == null) continue;
-
-            var bytes = await _telegram.GetChatThumbnailAsync(c.PeerInfo, token);
-            if (token.IsCancellationRequested) return;
-            if (bytes != null)
-                c.Thumbnail = ImageSource.FromStream(() => new MemoryStream(bytes));
+            var bytes = await _telegram.GetChatThumbnailAsync(chat.PeerInfo!, token);
+            if (bytes == null || token.IsCancellationRequested) return;
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (!token.IsCancellationRequested && chat.Thumbnail == null)
+                    chat.Thumbnail = ImageSource.FromStream(() => new MemoryStream(bytes));
+            });
         }
+        catch (OperationCanceledException) { /* abaikan */ }
+        finally { gate.Release(); }
     }
 
     [RelayCommand]
@@ -194,6 +271,8 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Konteks unduhan saat ini (chat/topik aktif) untuk penataan folder & manifest.</summary>
     private DownloadContext CurrentContext()
     {
+        // Catatan: untuk topik, ChatId = ParentId (id supergroup induk), bukan id topik — lihat
+        // dokumentasi DownloadContext. Topik dibedakan lewat TopicTitle (subfolder).
         if (_activeTopic != null)
             return new DownloadContext(_activeTopic.ParentId, _activeTopic.ParentTitle, _activeTopic.Title);
         if (_activeChat != null)
@@ -201,22 +280,39 @@ public partial class MainViewModel : ObservableObject
         return new DownloadContext(0, "Telegrab", null);
     }
 
-    /// <summary>Tandai media yang sudah ada di manifest sebagai "terunduh" saat pesan dimuat.</summary>
-    private void ApplyManifestState(IEnumerable<MessageItem> items, long chatId)
+    /// <summary>
+    /// Tandai media yang sudah ada di manifest sebagai "terunduh" saat pesan dimuat. Query DB +
+    /// pengecekan <c>File.Exists</c> dijalankan di thread pool (P2) agar tidak memblokir UI thread;
+    /// penerapan hasil (properti observable) dilakukan kembali di UI thread.
+    /// </summary>
+    private async Task ApplyManifestStateAsync(IReadOnlyList<MessageItem> items, long chatId)
     {
-        foreach (var item in items)
+        if (!_db.IsReady)
+            return;
+
+        var pending = items.SelectMany(m => m.Media).Where(p => !p.IsDownloaded).ToList();
+        if (pending.Count == 0)
+            return;
+
+        // Kerja DB + disk di luar UI thread.
+        var resolved = await Task.Run(() =>
         {
-            foreach (var part in item.Media)
+            var hits = new List<(MediaPart Part, string Path)>();
+            foreach (var part in pending)
             {
-                if (part.IsDownloaded) continue;
                 // Lewati query bila DB belum siap (root belum dikonfigurasi) agar daftar pesan
                 // tetap dimuat tanpa crash (Requirement 12.2/12.3).
                 if (_db.IsReady && _db.IsDownloaded(chatId, part.MessageId, part.MediaId, out var path))
-                {
-                    part.LocalPath = path;
-                    part.IsDownloaded = true;
-                }
+                    hits.Add((part, path));
             }
+            return hits;
+        });
+
+        // Kembali di UI thread (continuation): set properti observable.
+        foreach (var (part, path) in resolved)
+        {
+            part.LocalPath = path;
+            part.IsDownloaded = true;
         }
     }
 
@@ -313,8 +409,7 @@ public partial class MainViewModel : ObservableObject
             AllLoaded = !HasMore && Messages.Count > 0;
             Status = $"{Messages.Count} messages loaded.";
 
-            ApplyManifestState(page.Items, CurrentContext().ChatId);
-            await LoadThumbnailsAsync(page.Items, token);
+            await ApplyManifestStateAsync(page.Items, CurrentContext().ChatId);
         }
         catch (Exception ex)
         {
@@ -324,6 +419,12 @@ public partial class MainViewModel : ObservableObject
         {
             IsBusy = false;
         }
+
+        // Thumbnail dimuat di latar (fire-and-forget): JANGAN ditahan di bawah IsBusy. Sebelumnya
+        // fase ini di-await sehingga UI tetap "busy" — dan karena thumbnail di-throttle di belakang
+        // unduhan aktif, daftar pesan bisa terasa beku selama mengunduh (P1).
+        if (Messages.Count > 0)
+            _ = LoadThumbnailsAsync(Messages.ToList(), token);
     }
 
     private bool CanLoadMore() => HasMore && !IsBusy && _currentPeer != null && Messages.Count > 0;
@@ -354,8 +455,9 @@ public partial class MainViewModel : ObservableObject
             AllLoaded = !HasMore && Messages.Count > 0;
             Status = $"{Messages.Count} messages loaded.";
 
-            ApplyManifestState(page.Items, CurrentContext().ChatId);
-            await LoadThumbnailsAsync(page.Items, token);
+            await ApplyManifestStateAsync(page.Items, CurrentContext().ChatId);
+            // Fire-and-forget: jangan tahan IsBusy menunggu thumbnail (P1).
+            _ = LoadThumbnailsAsync(page.Items, token);
         }
         catch (Exception ex)
         {
@@ -395,7 +497,7 @@ public partial class MainViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(root))
         {
             await ToastAsync("Folder download belum dikonfigurasi. Buka Configuration untuk mengatur folder.");
-            OpenConfigRequested?.Invoke();
+            OpenConfigRequested?.Invoke(!_config.IsRootConfigured);
             return;
         }
 
@@ -441,19 +543,34 @@ public partial class MainViewModel : ObservableObject
 
     private async Task LoadThumbnailsAsync(IEnumerable<MessageItem> items, CancellationToken token)
     {
-        foreach (var item in items)
-        {
-            foreach (var part in item.Media)
-            {
-                if (token.IsCancellationRequested) return;
-                if (part.Thumbnail != null) continue;
+        var parts = items.SelectMany(m => m.Media).Where(p => p.Thumbnail == null).ToList();
+        if (parts.Count == 0) return;
 
-                var bytes = await _telegram.GetThumbnailAsync(part, token);
-                if (token.IsCancellationRequested) return;
-                if (bytes != null)
+        // Paralel terbatas (P3): unduh beberapa thumbnail sekaligus. Throttle thumbnail di
+        // TelegramService tetap memprioritaskan unduhan file penuh.
+        using var gate = new SemaphoreSlim(ThumbnailConcurrency);
+        var tasks = parts.Select(p => LoadOneThumbnailAsync(p, gate, token));
+        try { await Task.WhenAll(tasks); }
+        catch (OperationCanceledException) { /* dibatalkan: abaikan */ }
+    }
+
+    private async Task LoadOneThumbnailAsync(MediaPart part, SemaphoreSlim gate, CancellationToken token)
+    {
+        try { await gate.WaitAsync(token); }
+        catch (OperationCanceledException) { return; }
+        try
+        {
+            if (token.IsCancellationRequested) return;
+            var bytes = await _telegram.GetThumbnailAsync(part, token);
+            if (bytes == null || token.IsCancellationRequested) return;
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (!token.IsCancellationRequested && part.Thumbnail == null)
                     part.Thumbnail = ImageSource.FromStream(() => new MemoryStream(bytes));
-            }
+            });
         }
+        catch (OperationCanceledException) { /* abaikan */ }
+        finally { gate.Release(); }
     }
 
     [RelayCommand]
@@ -614,29 +731,35 @@ public partial class MainViewModel : ObservableObject
         catch { return false; }
     }
 
-    /// <summary>Buka modal Configuration (ikon header). Lihat ConfigPage/ConfigViewModel.</summary>
+    /// <summary>Buka modal Configuration (ikon header & tombol "Change" folder bar). Lihat ConfigPage/ConfigViewModel.</summary>
     [RelayCommand]
-    private void OpenConfiguration() => OpenConfigRequested?.Invoke();
+    private void OpenConfiguration() => OpenConfigRequested?.Invoke(false);
 
     /// <summary>
-    /// Gating proaktif di UI (Requirement 1.2/3.4): bila root download belum dikonfigurasi,
-    /// tampilkan pesan dan buka modal Configuration, lalu kembalikan <c>false</c> agar pemanggil
-    /// membatalkan aksi unduh. Service tetap melakukan strict gating sebagai lapisan kedua.
+    /// Gating proaktif di UI (Requirement 1.2/3.4): unduhan hanya boleh berjalan bila DB manifest
+    /// SIAP (root sudah dikonfigurasi DAN valid/terbuka). Bila tidak siap:
+    /// <list type="bullet">
+    ///   <item>root belum dikonfigurasi → buka modal Configuration mode WAJIB;</item>
+    ///   <item>root sudah dikonfigurasi tetapi tidak valid (folder hilang/izin) → pesan jelas +
+    ///         buka modal agar pengguna memilih ulang folder.</item>
+    /// </list>
+    /// Mengembalikan <c>false</c> agar pemanggil membatalkan aksi unduh. Service tetap melakukan
+    /// strict gating sebagai lapisan kedua.
     /// </summary>
     private async Task<bool> EnsureRootConfiguredAsync()
     {
-        if (_config.IsRootConfigured) return true;
+        if (_db.IsReady) return true;
 
-        await ToastAsync("Folder download belum dikonfigurasi. Buka Configuration untuk mengatur folder.");
-        OpenConfigRequested?.Invoke();
+        if (!_config.IsRootConfigured)
+        {
+            await ToastAsync("Folder download belum dikonfigurasi. Pilih folder di Configuration untuk mengunduh.");
+            OpenConfigRequested?.Invoke(true);
+        }
+        else
+        {
+            await ToastAsync("Folder download tidak dapat diakses. Pilih ulang folder di Configuration.");
+            OpenConfigRequested?.Invoke(false);
+        }
         return false;
-    }
-
-    [RelayCommand]
-    private Task ChangeDownloadFolderAsync()
-    {
-        // Root download kini dikonfigurasi lewat modal Configuration (mekanisme "strict root").
-        OpenConfigRequested?.Invoke();
-        return Task.CompletedTask;
     }
 }

@@ -26,4 +26,15 @@ public partial class ConfigPage : ContentPage
         _vm.CloseRequested -= OnCloseRequested;
         await Navigation.PopModalAsync();
     }
+
+    /// <summary>
+    /// Blokir tombol back perangkat saat modal dalam mode wajib dan root belum dikonfigurasi,
+    /// sehingga konfigurasi path benar-benar mandatory.
+    /// </summary>
+    protected override bool OnBackButtonPressed()
+    {
+        if (_vm.IsMandatory)
+            return true; // tahan back: tetap di modal sampai folder valid dipilih
+        return base.OnBackButtonPressed();
+    }
 }

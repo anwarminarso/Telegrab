@@ -10,29 +10,34 @@
 
     <Grid RowDefinitions="Auto,*">
 
-        <!-- Header: judul folder + aksi (Edit/Save/Done) + tutup -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Padding="16,12" ColumnSpacing="10"
+        <!-- Header: judul folder + aksi (Rebuild/Edit/Save/Done) + tutup -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" Padding="16,12" ColumnSpacing="10"
               BackgroundColor="{AppThemeBinding Light={StaticResource SidebarLight}, Dark={StaticResource SidebarDark}}">
             <mi:MauiIcon Grid.Column="0" Icon="{mi:Material Description}" IconSize="20"
                          IconColor="{StaticResource Accent}" VerticalOptions="Center" />
             <Label Grid.Column="1" Text="{Binding Title}" FontSize="18" FontFamily="OpenSansSemibold"
                    VerticalOptions="Center" LineBreakMode="MiddleTruncation" />
             <Button Grid.Column="2" Style="{StaticResource IconSubtleButton}"
+                    mi:MauiIcon.Value="{mi:Material Refresh}"
+                    Command="{Binding RebuildCommand}"
+                    IsVisible="{Binding ShowEditButton}"
+                    SemanticProperties.Description="Rebuild documentation from database" />
+            <Button Grid.Column="3" Style="{StaticResource IconSubtleButton}"
                     mi:MauiIcon.Value="{mi:Material Edit}"
                     Command="{Binding EditCommand}"
                     IsVisible="{Binding ShowEditButton}"
                     SemanticProperties.Description="Edit documentation" />
-            <Button Grid.Column="3" Style="{StaticResource IconSubtleButton}"
+            <Button Grid.Column="4" Style="{StaticResource IconSubtleButton}"
                     mi:MauiIcon.Value="{mi:Material Save}"
                     Command="{Binding SaveCommand}"
                     IsVisible="{Binding ShowEditorActions}"
                     SemanticProperties.Description="Save documentation" />
-            <Button Grid.Column="4" Style="{StaticResource IconSubtleButton}"
+            <Button Grid.Column="5" Style="{StaticResource IconSubtleButton}"
                     mi:MauiIcon.Value="{mi:Material Done}"
                     Command="{Binding DoneCommand}"
                     IsVisible="{Binding ShowEditorActions}"
                     SemanticProperties.Description="Finish editing" />
-            <Button Grid.Column="5" Style="{StaticResource IconSubtleButton}"
+            <Button Grid.Column="6" Style="{StaticResource IconSubtleButton}"
                     mi:MauiIcon.Value="{mi:Material Close}"
                     Command="{Binding CloseCommand}"
                     SemanticProperties.Description="Close documentation viewer" />
@@ -47,10 +52,16 @@
         <!-- Mode edit: split Editor (kiri) + pratinjau langsung (kanan) -->
         <Grid Grid.Row="1" IsVisible="{Binding IsEditing}" RowDefinitions="Auto,*">
 
-            <!-- Banner peringatan/status (mis. edit di dalam blok penanda) -->
-            <Border Grid.Row="0" IsVisible="{Binding HasWarning}" Padding="12,8" Margin="0"
-                    BackgroundColor="{AppThemeBinding Light=#FFF4E0, Dark=#3A2F12}">
-                <Label Text="{Binding WarningMessage}" LineBreakMode="WordWrap" FontSize="13" />
+            <!-- Banner status/peringatan editor: hijau utk sukses/info, amber utk peringatan -->
+            <Border Grid.Row="0" IsVisible="{Binding ShowBanner}" Padding="12,8" Margin="0"
+                    BackgroundColor="{AppThemeBinding Light=#E6F4EA, Dark=#163A22}">
+                <Border.Triggers>
+                    <DataTrigger TargetType="Border" Binding="{Binding BannerIsWarning}" Value="True">
+                        <Setter Property="BackgroundColor"
+                                Value="{AppThemeBinding Light=#FFF4E0, Dark=#3A2F12}" />
+                    </DataTrigger>
+                </Border.Triggers>
+                <Label Text="{Binding BannerMessage}" LineBreakMode="WordWrap" FontSize="13" />
             </Border>
 
             <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="1"
