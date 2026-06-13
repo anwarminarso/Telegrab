@@ -29,7 +29,7 @@ Keep PRs small and single-purpose where possible.
 
 ## Checklist
 
-- [ ] My code follows the conventions in CONTRIBUTING.md and `.kiro/steering/`.
+- [ ] My code follows the conventions in CONTRIBUTING.md.
 - [ ] User-facing text is in English; code comments are in Indonesian.
 - [ ] Pure-logic services (`ManifestDbService`, `DocumentationRenderer`, `CaptionResolver`, etc.)
       remain free of MAUI/WTelegram dependencies.

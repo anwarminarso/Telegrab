@@ -30,5 +30,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   external-viewer compatibility.
 - Caption association (own / album / reply / inferred / none) with cross-page reply resolution.
 
-[Unreleased]: https://github.com/OWNER/Telegrab/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/OWNER/Telegrab/releases/tag/v1.0.0
+[Unreleased]: https://github.com/anwarminarso/Telegrab/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/anwarminarso/Telegrab/releases/tag/v1.0.0

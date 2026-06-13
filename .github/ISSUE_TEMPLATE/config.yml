@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/OWNER/Telegrab/security/policy
+    url: https://github.com/anwarminarso/Telegrab/security/policy
     about: "Do not file security issues publicly. See SECURITY.md for private reporting."
   - name: Question / discussion
-    url: https://github.com/OWNER/Telegrab/discussions
+    url: https://github.com/anwarminarso/Telegrab/discussions
     about: "For general questions and ideas, please start a discussion instead of an issue."
