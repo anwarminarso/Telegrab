@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:mi="http://www.aathifmahir.com/dotnet/2022/maui/icons"
+             xmlns:vm="clr-namespace:Telegrab.ViewModels"
+             x:Class="Telegrab.Views.ConfigPage"
+             x:DataType="vm:ConfigViewModel"
+             NavigationPage.HasNavigationBar="False"
+             Title="Configuration">
+
+    <Grid Padding="24" RowDefinitions="*,Auto,*">
+
+        <!-- Kartu konfigurasi terpusat -->
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="28"
+                MaximumWidthRequest="520" HorizontalOptions="Center" VerticalOptions="Center">
+            <Border.Shadow>
+                <Shadow Brush="#000000" Opacity="0.12" Radius="30" Offset="0,8" />
+            </Border.Shadow>
+
+            <VerticalStackLayout Spacing="8">
+
+                <Label Text="Download configuration" FontSize="22" FontFamily="OpenSansSemibold" />
+                <Label Text="Folder root yang dikelola aplikasi. Seluruh hasil unduhan dan database (telegrab.db) tersimpan di sini."
+                       Style="{StaticResource Secondary}" Margin="0,0,0,8" />
+
+                <!-- Root saat ini -->
+                <Label Text="Current download root" Style="{StaticResource FieldLabel}" />
+                <Border Style="{StaticResource InputBorder}" Padding="12,8">
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                        <mi:MauiIcon Grid.Column="0" Icon="{mi:Material Folder}" IconSize="18"
+                                     IconColor="{StaticResource Accent}" VerticalOptions="Center" />
+                        <Label Grid.Column="1" Text="{Binding CurrentRoot}" VerticalOptions="Center"
+                               LineBreakMode="MiddleTruncation" />
+                    </Grid>
+                </Border>
+
+                <!-- Status validasi / izin -->
+                <Label Text="{Binding StatusText}" Style="{StaticResource Secondary}"
+                       LineBreakMode="WordWrap" Margin="0,8,0,0" />
+
+                <!-- Aksi -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,12,0,0">
+                    <Button Grid.Column="0" Text="Change folder"
+                            mi:MauiIcon.Value="{mi:Material FolderOpen}"
+                            Command="{Binding ChangeFolderCommand}"
+                            SemanticProperties.Description="Pick a new download root folder" />
+                    <Button Grid.Column="1" Text="Close" Style="{StaticResource GhostButton}"
+                            Command="{Binding CancelCommand}"
+                            SemanticProperties.Description="Close configuration without changes" />
+                </Grid>
+            </VerticalStackLayout>
+        </Border>
+    </Grid>
+</ContentPage>

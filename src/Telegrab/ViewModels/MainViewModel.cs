@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Maui.Alerts;
 using CommunityToolkit.Maui.Core;
-using CommunityToolkit.Maui.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Telegrab.Models;
@@ -15,7 +14,8 @@ public partial class MainViewModel : ObservableObject
     private readonly TelegramService _telegram;
     private readonly ConfigService _config;
     private readonly DownloadQueueService _queue;
-    private readonly DownloadManifestService _manifest;
+    private readonly ManifestDbService _db;
+    private readonly DocumentationService _documentation;
     private CancellationTokenSource? _thumbCts;
     private CancellationTokenSource? _chatThumbCts;
     private readonly List<ChatItem> _allChats = new();
@@ -59,14 +59,25 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Diminta saat media siap ditampilkan di viewer (dengan navigasi galeri).</summary>
     public event Action<MediaGalleryRequest>? OpenMediaRequested;
 
+    /// <summary>Diminta saat modal Configuration perlu dibuka (ikon header / gating unduh).</summary>
+    public event Action? OpenConfigRequested;
+
+    /// <summary>Diminta saat penampil dokumentasi (README.md) perlu dibuka untuk konteks aktif.</summary>
+    public event Action<DocumentationRequest>? OpenDocumentationRequested;
+
     public MainViewModel(TelegramService telegram, ConfigService config,
-        DownloadQueueService queue, DownloadManifestService manifest)
+        DownloadQueueService queue, ManifestDbService db,
+        DocumentationService documentation)
     {
         _telegram = telegram;
         _config = config;
         _queue = queue;
-        _manifest = manifest;
-        _downloadFolder = _config.Load().DownloadFolder;
+        _db = db;
+        _documentation = documentation;
+
+        // Folder bar mencerminkan root download "strict" (sumber kebenaran kini ConfigService.DownloadRoot).
+        _downloadFolder = _config.DownloadRoot ?? string.Empty;
+        _config.RootChanged += path => DownloadFolder = path;
     }
 
     [RelayCommand]
@@ -198,7 +209,9 @@ public partial class MainViewModel : ObservableObject
             foreach (var part in item.Media)
             {
                 if (part.IsDownloaded) continue;
-                if (_manifest.IsDownloaded(chatId, part.MessageId, part.MediaId, out var path))
+                // Lewati query bila DB belum siap (root belum dikonfigurasi) agar daftar pesan
+                // tetap dimuat tanpa crash (Requirement 12.2/12.3).
+                if (_db.IsReady && _db.IsDownloaded(chatId, part.MessageId, part.MediaId, out var path))
                 {
                     part.LocalPath = path;
                     part.IsDownloaded = true;
@@ -360,6 +373,72 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanRefresh))]
     private Task RefreshAsync() => ReloadAsync();
 
+    private bool CanRebuildDocumentation() => _currentPeer != null;
+
+    /// <summary>
+    /// Buka penampil dokumentasi (<c>README.md</c>) untuk chat/topik aktif (Requirement 10.1).
+    /// Bila belum ada chat/topik dipilih atau root belum dikonfigurasi, beri pesan jelas
+    /// (Requirement 10.3); penanganan README yang belum ada ditangani di dalam penampil
+    /// (tawarkan rebuild). Folder relatif diturunkan sama seperti tempat media ditulis,
+    /// dan root absolut diambil dari DB aktif (fallback ke konfigurasi).
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenDocumentationAsync()
+    {
+        if (_currentPeer == null)
+        {
+            await ToastAsync("Select a chat or topic first.");
+            return;
+        }
+
+        var root = _db.Root ?? _config.DownloadRoot;
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            await ToastAsync("Folder download belum dikonfigurasi. Buka Configuration untuk mengatur folder.");
+            OpenConfigRequested?.Invoke();
+            return;
+        }
+
+        var relativeFolder = _telegram.BuildRelativeFolder(CurrentContext());
+        OpenDocumentationRequested?.Invoke(new DocumentationRequest(relativeFolder, root));
+    }
+
+    /// <summary>
+    /// Bangun ulang <c>README.md</c> untuk folder chat/topik aktif dari DB (Requirement 9.3).
+    /// Karena aksi ini menimpa blok ter-generate, minta konfirmasi lebih dulu. Folder relatif
+    /// diturunkan dari konteks aktif memakai sanitasi yang sama dengan tempat file ditulis,
+    /// sehingga cocok dengan lokasi media di disk.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanRebuildDocumentation))]
+    private async Task RebuildDocumentationAsync()
+    {
+        if (_currentPeer == null)
+        {
+            await ToastAsync("Select a chat or topic first.");
+            return;
+        }
+
+        var relativeFolder = _telegram.BuildRelativeFolder(CurrentContext());
+
+        var confirmed = await ConfirmAsync(
+            "Rebuild documentation",
+            $"This will regenerate the README.md for \"{relativeFolder}\" from the database, " +
+            "overwriting the generated block. Continue?",
+            "Rebuild", "Cancel");
+        if (!confirmed)
+            return;
+
+        try
+        {
+            await _documentation.RebuildFolderAsync(relativeFolder);
+            await ToastAsync("Documentation rebuilt.");
+        }
+        catch (Exception ex)
+        {
+            await ToastAsync($"Rebuild failed: {ex.Message}");
+        }
+    }
+
     private async Task LoadThumbnailsAsync(IEnumerable<MessageItem> items, CancellationToken token)
     {
         foreach (var item in items)
@@ -381,6 +460,7 @@ public partial class MainViewModel : ObservableObject
     private async Task DownloadPartAsync(MediaPart? part)
     {
         if (part == null || part.IsDownloading || part.IsDownloaded) return;
+        if (!await EnsureRootConfiguredAsync()) return;
 
         part.IsDownloading = true;
         part.Progress = 0;
@@ -406,8 +486,16 @@ public partial class MainViewModel : ObservableObject
     private async Task DownloadMessageAsync(MessageItem? message)
     {
         if (message == null || !message.HasMedia) return;
-        var added = _queue.Enqueue(message.Media, CurrentContext());
-        await ToastAsync(added > 0 ? $"{added} media added to the queue." : "All media already downloaded.");
+        if (!await EnsureRootConfiguredAsync()) return;
+        try
+        {
+            var added = _queue.Enqueue(message.Media, CurrentContext());
+            await ToastAsync(added > 0 ? $"{added} media added to the queue." : "All media already downloaded.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await ToastAsync(ex.Message);
+        }
     }
 
     private bool CanDownloadAllLoaded() => !IsBusy && _currentPeer != null && Messages.Count > 0;
@@ -426,9 +514,17 @@ public partial class MainViewModel : ObservableObject
             await ToastAsync("No messages loaded yet.");
             return;
         }
+        if (!await EnsureRootConfiguredAsync()) return;
         var parts = Messages.SelectMany(m => m.Media);
-        var added = _queue.Enqueue(parts, CurrentContext());
-        await ToastAsync(added > 0 ? $"{added} media added to the queue." : "All media already downloaded.");
+        try
+        {
+            var added = _queue.Enqueue(parts, CurrentContext());
+            await ToastAsync(added > 0 ? $"{added} media added to the queue." : "All media already downloaded.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await ToastAsync(ex.Message);
+        }
     }
 
     [RelayCommand]
@@ -476,6 +572,8 @@ public partial class MainViewModel : ObservableObject
         if (part.IsDownloaded && !string.IsNullOrEmpty(part.LocalPath) && File.Exists(part.LocalPath))
             return part.LocalPath;
 
+        if (!await EnsureRootConfiguredAsync()) return null;
+
         part.IsDownloading = true;
         part.Progress = 0;
         var progress = new Progress<double>(p => part.Progress = p);
@@ -500,22 +598,45 @@ public partial class MainViewModel : ObservableObject
         catch { /* abaikan kegagalan menampilkan toast */ }
     }
 
-    [RelayCommand]
-    private async Task ChangeDownloadFolderAsync()
+    /// <summary>
+    /// Tampilkan dialog konfirmasi (ya/tidak) memakai window aktif aplikasi. Mengembalikan
+    /// <c>true</c> bila pengguna menyetujui. Aman bila tidak ada window (mis. saat test).
+    /// </summary>
+    private static async Task<bool> ConfirmAsync(string title, string message, string accept, string cancel)
     {
-        try
-        {
-            var result = await FolderPicker.Default.PickAsync(CancellationToken.None);
-            if (result.IsSuccessful && result.Folder is not null)
-            {
-                DownloadFolder = result.Folder.Path;
-                _config.SaveDownloadFolder(DownloadFolder);
-                await ToastAsync("Download folder changed.");
-            }
-        }
-        catch (Exception ex)
-        {
-            await ToastAsync($"Failed to pick folder: {ex.Message}");
-        }
+        var page = Application.Current?.Windows.Count > 0
+            ? Application.Current.Windows[0].Page
+            : null;
+        if (page == null)
+            return false;
+
+        try { return await page.DisplayAlertAsync(title, message, accept, cancel); }
+        catch { return false; }
+    }
+
+    /// <summary>Buka modal Configuration (ikon header). Lihat ConfigPage/ConfigViewModel.</summary>
+    [RelayCommand]
+    private void OpenConfiguration() => OpenConfigRequested?.Invoke();
+
+    /// <summary>
+    /// Gating proaktif di UI (Requirement 1.2/3.4): bila root download belum dikonfigurasi,
+    /// tampilkan pesan dan buka modal Configuration, lalu kembalikan <c>false</c> agar pemanggil
+    /// membatalkan aksi unduh. Service tetap melakukan strict gating sebagai lapisan kedua.
+    /// </summary>
+    private async Task<bool> EnsureRootConfiguredAsync()
+    {
+        if (_config.IsRootConfigured) return true;
+
+        await ToastAsync("Folder download belum dikonfigurasi. Buka Configuration untuk mengatur folder.");
+        OpenConfigRequested?.Invoke();
+        return false;
+    }
+
+    [RelayCommand]
+    private Task ChangeDownloadFolderAsync()
+    {
+        // Root download kini dikonfigurasi lewat modal Configuration (mekanisme "strict root").
+        OpenConfigRequested?.Invoke();
+        return Task.CompletedTask;
     }
 }

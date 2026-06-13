@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:mi="http://www.aathifmahir.com/dotnet/2022/maui/icons"
+             xmlns:vm="clr-namespace:Telegrab.ViewModels"
+             x:Class="Telegrab.Views.MarkdownViewerPage"
+             x:DataType="vm:MarkdownViewerViewModel"
+             NavigationPage.HasNavigationBar="False"
+             Title="Documentation">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Header: judul folder + aksi (Edit/Save/Done) + tutup -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Padding="16,12" ColumnSpacing="10"
+              BackgroundColor="{AppThemeBinding Light={StaticResource SidebarLight}, Dark={StaticResource SidebarDark}}">
+            <mi:MauiIcon Grid.Column="0" Icon="{mi:Material Description}" IconSize="20"
+                         IconColor="{StaticResource Accent}" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="{Binding Title}" FontSize="18" FontFamily="OpenSansSemibold"
+                   VerticalOptions="Center" LineBreakMode="MiddleTruncation" />
+            <Button Grid.Column="2" Style="{StaticResource IconSubtleButton}"
+                    mi:MauiIcon.Value="{mi:Material Edit}"
+                    Command="{Binding EditCommand}"
+                    IsVisible="{Binding ShowEditButton}"
+                    SemanticProperties.Description="Edit documentation" />
+            <Button Grid.Column="3" Style="{StaticResource IconSubtleButton}"
+                    mi:MauiIcon.Value="{mi:Material Save}"
+                    Command="{Binding SaveCommand}"
+                    IsVisible="{Binding ShowEditorActions}"
+                    SemanticProperties.Description="Save documentation" />
+            <Button Grid.Column="4" Style="{StaticResource IconSubtleButton}"
+                    mi:MauiIcon.Value="{mi:Material Done}"
+                    Command="{Binding DoneCommand}"
+                    IsVisible="{Binding ShowEditorActions}"
+                    SemanticProperties.Description="Finish editing" />
+            <Button Grid.Column="5" Style="{StaticResource IconSubtleButton}"
+                    mi:MauiIcon.Value="{mi:Material Close}"
+                    Command="{Binding CloseCommand}"
+                    SemanticProperties.Description="Close documentation viewer" />
+        </Grid>
+
+        <!-- Konten render Markdown (mode tampil read-only) -->
+        <WebView Grid.Row="1" x:Name="Viewer"
+                 Source="{Binding HtmlSource}"
+                 IsVisible="{Binding ShowViewer}"
+                 Navigating="OnNavigating" />
+
+        <!-- Mode edit: split Editor (kiri) + pratinjau langsung (kanan) -->
+        <Grid Grid.Row="1" IsVisible="{Binding IsEditing}" RowDefinitions="Auto,*">
+
+            <!-- Banner peringatan/status (mis. edit di dalam blok penanda) -->
+            <Border Grid.Row="0" IsVisible="{Binding HasWarning}" Padding="12,8" Margin="0"
+                    BackgroundColor="{AppThemeBinding Light=#FFF4E0, Dark=#3A2F12}">
+                <Label Text="{Binding WarningMessage}" LineBreakMode="WordWrap" FontSize="13" />
+            </Border>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="1"
+                  BackgroundColor="{AppThemeBinding Light={StaticResource SidebarLight}, Dark={StaticResource SidebarDark}}">
+                <Editor Grid.Column="0" x:Name="MarkdownEditor"
+                        Text="{Binding RawMarkdown}"
+                        AutoSize="Disabled"
+                        FontFamily="Consolas"
+                        FontSize="14"
+                        IsSpellCheckEnabled="False"
+                        IsTextPredictionEnabled="False"
+                        SemanticProperties.Description="Raw Markdown editor" />
+                <WebView Grid.Column="1" x:Name="PreviewWeb"
+                         Source="{Binding HtmlSource}"
+                         Navigating="OnNavigating" />
+            </Grid>
+        </Grid>
+
+        <!-- Pesan kosong + aksi Rebuild (Requirement 10.3) -->
+        <Grid Grid.Row="1" IsVisible="{Binding IsEmpty}" Padding="32">
+            <VerticalStackLayout Spacing="14" HorizontalOptions="Center" VerticalOptions="Center"
+                                 MaximumWidthRequest="420">
+                <mi:MauiIcon Icon="{mi:Material Article}" IconSize="48"
+                             IconColor="{StaticResource Accent}" HorizontalOptions="Center" />
+                <Label Text="{Binding EmptyMessage}" HorizontalTextAlignment="Center"
+                       Style="{StaticResource Secondary}" LineBreakMode="WordWrap" />
+                <Button Text="Rebuild documentation"
+                        mi:MauiIcon.Value="{mi:Material Refresh}"
+                        Command="{Binding RebuildCommand}"
+                        IsEnabled="{Binding CanRebuild}"
+                        HorizontalOptions="Center"
+                        SemanticProperties.Description="Rebuild README from database" />
+            </VerticalStackLayout>
+        </Grid>
+
+        <!-- Indikator rebuild -->
+        <ActivityIndicator Grid.Row="1" IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}"
+                           Color="{StaticResource Accent}"
+                           HorizontalOptions="Center" VerticalOptions="Center" />
+    </Grid>
+</ContentPage>

@@ -7,16 +7,20 @@ namespace Telegrab;
 public partial class MainPage : ContentPage
 {
 	private readonly MainViewModel _vm;
+	private readonly IServiceProvider _services;
 	private bool _loaded;
 
-	public MainPage(MainViewModel vm)
+	public MainPage(MainViewModel vm, IServiceProvider services)
 	{
 		InitializeComponent();
 		_ = new MauiIcon(); // workaround namespace url-style MauiIcons
 		_vm = vm;
+		_services = services;
 		BindingContext = vm;
 
 		vm.OpenMediaRequested += OnOpenMedia;
+		vm.OpenConfigRequested += OnOpenConfig;
+		vm.OpenDocumentationRequested += OnOpenDocumentation;
 	}
 
 	protected override async void OnAppearing()
@@ -30,5 +34,18 @@ public partial class MainPage : ContentPage
 	private async void OnOpenMedia(Models.MediaGalleryRequest request)
 	{
 		await Navigation.PushModalAsync(new MediaViewerPage(request));
+	}
+
+	private async void OnOpenConfig()
+	{
+		var page = _services.GetRequiredService<ConfigPage>();
+		await Navigation.PushModalAsync(page);
+	}
+
+	private async void OnOpenDocumentation(Models.DocumentationRequest request)
+	{
+		var page = _services.GetRequiredService<MarkdownViewerPage>();
+		page.Initialize(request.RelativeFolder, request.Root);
+		await Navigation.PushModalAsync(page);
 	}
 }

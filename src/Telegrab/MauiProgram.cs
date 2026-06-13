@@ -28,21 +28,35 @@ public static class MauiProgram
 		// Services
 		builder.Services.AddSingleton<ConfigService>();
 		builder.Services.AddSingleton<TelegramService>();
-		builder.Services.AddSingleton<DownloadManifestService>();
+		builder.Services.AddSingleton<ManifestDbService>();
+		builder.Services.AddSingleton<DocumentationService>();
+		builder.Services.AddSingleton<DbLifecycleCoordinator>();
 		builder.Services.AddSingleton<DownloadQueueService>();
 
 		// ViewModels
 		builder.Services.AddSingleton<LoginViewModel>();
 		builder.Services.AddSingleton<MainViewModel>();
+		builder.Services.AddTransient<ConfigViewModel>();
+		builder.Services.AddTransient<MarkdownViewerViewModel>();
 
 		// Pages
 		builder.Services.AddSingleton<LoginPage>();
 		builder.Services.AddSingleton<MainPage>();
+		builder.Services.AddTransient<ConfigPage>();
+		builder.Services.AddTransient<MarkdownViewerPage>();
 
 #if DEBUG
 		builder.Logging.AddDebug();
 #endif
 
-		return builder.Build();
+		var app = builder.Build();
+
+		// Wire DB lifecycle ke root download: buka DB saat startup bila root valid, dan
+		// pasang langganan RootChanged (tutup DB lama → buka DB root baru). Resolusi di sini
+		// memastikan singleton terbentuk sehingga langganan event aktif sejak awal.
+		var dbLifecycle = app.Services.GetRequiredService<DbLifecycleCoordinator>();
+		dbLifecycle.Initialize();
+
+		return app;
 	}
 }

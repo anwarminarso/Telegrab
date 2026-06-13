@@ -1,0 +1,59 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    Pendekatan referensi (didokumentasikan di task 1):
+    Proyek test ini menargetkan net10.0 (TANPA MAUI) sehingga TIDAK boleh me-ProjectReference
+    proyek MAUI `Telegrab.csproj` (yang menarik runtime MAUI: ImageSource, WinUI, dll).
+
+    Sebagai gantinya kita memakai LINKED SOURCE FILES: setiap file logika MURNI (tanpa
+    dependensi MAUI) dari proyek utama di-`<Compile Include .. Link=.. />` ke dalam proyek
+    test. Dengan begitu kelas seperti `ManifestDbService`, `CaptionResolver`,
+    `DocumentationService`, dan model POCO (mis. `MediaRecord`) dikompilasi langsung di sini
+    dan bisa diuji tanpa runtime MAUI.
+
+    CATATAN: file model yang BERGANTUNG pada MAUI/WTelegram (mis. `MediaPart` yang memakai
+    `ImageSource`/`ObservableObject`/`TL`) TIDAK boleh dilink ke sini. Logika murni harus
+    dijaga bebas dari tipe MAUI agar dapat dilink.
+
+    File-file pure logic dibuat pada task berikutnya (2, 3, 7, 10). Tambahkan link-nya di
+    ItemGroup "Linked pure-logic sources" di bawah seiring file tersebut dibuat.
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <PackageReference Include="Markdig" Version="0.41.3" />
+  </ItemGroup>
+
+  <!-- Linked pure-logic sources (diisi pada task 2/3/7/10). -->
+  <ItemGroup>
+    <Compile Include="..\Telegrab\Models\CaptionSource.cs" Link="Linked\CaptionSource.cs" />
+    <Compile Include="..\Telegrab\Models\MediaRecord.cs" Link="Linked\MediaRecord.cs" />
+    <Compile Include="..\Telegrab\Models\RootValidationResult.cs" Link="Linked\RootValidationResult.cs" />
+    <Compile Include="..\Telegrab\Services\ManifestDbService.cs" Link="Linked\ManifestDbService.cs" />
+    <Compile Include="..\Telegrab\Services\RootValidator.cs" Link="Linked\RootValidator.cs" />
+    <Compile Include="..\Telegrab\Services\DownloadRootState.cs" Link="Linked\DownloadRootState.cs" />
+    <Compile Include="..\Telegrab\Models\ISenderIdentity.cs" Link="Linked\ISenderIdentity.cs" />
+    <Compile Include="..\Telegrab\Models\ResolverMedia.cs" Link="Linked\ResolverMedia.cs" />
+    <Compile Include="..\Telegrab\Models\ResolverMessage.cs" Link="Linked\ResolverMessage.cs" />
+    <Compile Include="..\Telegrab\Services\CaptionOptions.cs" Link="Linked\CaptionOptions.cs" />
+    <Compile Include="..\Telegrab\Services\MessageWindow.cs" Link="Linked\MessageWindow.cs" />
+    <Compile Include="..\Telegrab\Services\CaptionResolver.cs" Link="Linked\CaptionResolver.cs" />
+    <Compile Include="..\Telegrab\Services\DocumentationRenderer.cs" Link="Linked\DocumentationRenderer.cs" />
+    <Compile Include="..\Telegrab\Services\DocumentationService.cs" Link="Linked\DocumentationService.cs" />
+    <Compile Include="..\Telegrab\Services\MarkdownHtmlRenderer.cs" Link="Linked\MarkdownHtmlRenderer.cs" />
+  </ItemGroup>  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

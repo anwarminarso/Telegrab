@@ -13,8 +13,16 @@ namespace Telegrab.Services;
 public partial class DownloadQueueService : ObservableObject
 {
     private readonly TelegramService _telegram;
-    private readonly DownloadManifestService _manifest;
-    private readonly ConfigService _config;
+    private readonly ManifestDbService _db;
+    private readonly DocumentationService _documentation;
+
+    /// <summary>
+    /// Pesan strict gating (Requirement 1.2): bila root belum valid / DB belum siap, semua
+    /// operasi unduh ditolak dengan arahan ke modal Configuration.
+    /// </summary>
+    private const string NotReadyMessage =
+        "Folder download belum dikonfigurasi atau tidak valid. Buka Configuration untuk " +
+        "mengatur folder download sebelum mengunduh.";
 
     private readonly Channel<DownloadJob> _channel = Channel.CreateUnbounded<DownloadJob>();
     private Task? _worker;
@@ -30,30 +38,43 @@ public partial class DownloadQueueService : ObservableObject
     [ObservableProperty] private bool _isRunning;
     [ObservableProperty] private string _summary = string.Empty;
 
-    public DownloadQueueService(TelegramService telegram, DownloadManifestService manifest, ConfigService config)
+    public DownloadQueueService(TelegramService telegram, ManifestDbService db, DocumentationService documentation)
     {
         _telegram = telegram;
-        _manifest = manifest;
-        _config = config;
+        _db = db;
+        _documentation = documentation;
     }
 
-    private string Root
+    /// <summary>
+    /// Root download aktif = root tempat <c>telegrab.db</c> dibuka, sehingga path media
+    /// selalu relatif terhadap root yang sama dengan DB-nya. Memanggil properti ini hanya
+    /// sah setelah <see cref="EnsureReady"/> (DB siap).
+    /// </summary>
+    private string Root => _db.Root
+        ?? throw new InvalidOperationException(NotReadyMessage);
+
+    /// <summary>
+    /// Strict gating (Requirement 1.2): tolak operasi unduh bila DB manifest belum siap
+    /// (root belum dikonfigurasi/valid). Melempar <see cref="InvalidOperationException"/>
+    /// dengan pesan yang mengarahkan pengguna ke modal Configuration.
+    /// </summary>
+    private void EnsureReady()
     {
-        get
-        {
-            var folder = _config.Load().DownloadFolder;
-            return string.IsNullOrWhiteSpace(folder) ? _config.DefaultDownloadFolder : folder;
-        }
+        if (!_db.IsReady)
+            throw new InvalidOperationException(NotReadyMessage);
     }
 
     /// <summary>Tambahkan media ke antrian. Media yang sudah diunduh dilewati otomatis.</summary>
     public int Enqueue(IEnumerable<MediaPart> parts, DownloadContext ctx)
     {
+        // Strict gating: tanpa DB siap, tolak seluruh operasi dengan pesan jelas.
+        EnsureReady();
+
         int added = 0;
         foreach (var part in parts)
         {
             if (part.IsDownloaded) continue;
-            if (_manifest.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
+            if (_db.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
             {
                 part.IsDownloaded = true;
                 part.LocalPath = existing;
@@ -179,15 +200,19 @@ public partial class DownloadQueueService : ObservableObject
         DownloadJob? job = null,
         CancellationToken ct = default)
     {
+        // Strict gating: tolak unduhan bila DB manifest belum siap (root belum valid).
+        EnsureReady();
+
         // Sudah ada? lewati (idempotent).
-        if (_manifest.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
+        if (_db.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
         {
             ApplyDownloaded(part, existing);
             if (job != null) UpdateJob(job, j => j.State = DownloadState.Skipped);
             return existing;
         }
 
-        var target = _telegram.BuildTargetPath(Root, ctx, part);
+        var root = Root;
+        var target = _telegram.BuildTargetPath(root, ctx, part);
 
         void OnFlood(int seconds)
         {
@@ -196,10 +221,75 @@ public partial class DownloadQueueService : ObservableObject
 
         var path = await _telegram.DownloadToPathAsync(part, target, progress, OnFlood, ct);
 
-        _manifest.Mark(ctx, part, path);
+        // Catat ke DB manifest (sumber kebenaran). relative_path disimpan relatif terhadap
+        // root tempat DB berada, dinormalkan ke pemisah '/' untuk portabilitas.
+        var record = BuildRecord(ctx, part, root, path);
+        _db.Mark(record);
+
+        // Picu regenerasi README.md untuk folder media (di-debounce agar batch unduh tidak
+        // menulis README berkali-kali). Folder diturunkan dari relative_path yang baru dicatat
+        // sehingga selalu konsisten dengan lokasi file di disk (Requirement 9.1).
+        var relativeFolder = GetRelativeFolder(record.RelativePath);
+        _ = _documentation.UpdateFolderAsync(relativeFolder);
+
         ApplyDownloaded(part, path);
         return path;
     }
+
+    /// <summary>
+    /// Folder RELATIF (terhadap root) dari sebuah <c>relative_path</c>: direktori induk file,
+    /// dinormalkan ke pemisah '/'. Mengembalikan string kosong bila file berada langsung di root.
+    /// </summary>
+    private static string GetRelativeFolder(string relativePath)
+    {
+        var normalized = relativePath.Replace('\\', '/');
+        var idx = normalized.LastIndexOf('/');
+        return idx < 0 ? string.Empty : normalized[..idx];
+    }
+
+    /// <summary>
+    /// Susun <see cref="MediaRecord"/> dari hasil unduhan. <c>relative_path</c> diturunkan dari
+    /// path absolut hasil <see cref="TelegramService.BuildTargetPath"/> relatif terhadap
+    /// <paramref name="root"/> (DB root), lalu dinormalkan ke pemisah '/'.
+    /// </summary>
+    private static MediaRecord BuildRecord(DownloadContext ctx, MediaPart part, string root, string absolutePath)
+    {
+        var relativePath = Path.GetRelativePath(root, absolutePath).Replace('\\', '/');
+
+        return new MediaRecord
+        {
+            ChatId = ctx.ChatId,
+            MessageId = part.MessageId,
+            MediaId = part.MediaId,
+            // MediaPart tidak membawa grouped_id; group_id null bila tak tersedia (lihat task 9).
+            GroupId = null,
+            ChatTitle = ctx.ChatTitle,
+            TopicTitle = ctx.TopicTitle,
+            RelativePath = relativePath,
+            FileName = Path.GetFileName(absolutePath),
+            Size = part.FileSize,
+            Type = MapType(part.Kind),
+            Width = part.Width,
+            Height = part.Height,
+            DurationSeconds = part.DurationSeconds,
+            Sender = part.Sender,
+            Caption = part.Caption,
+            CaptionSource = part.CaptionSource,
+            CaptionFromMessageId = part.CaptionFromMessageId,
+            Note = part.Note,
+            NoteFromMessageId = part.NoteFromMessageId,
+            MessageDateUtc = part.MessageDate,
+            DownloadedAtUtc = DateTime.UtcNow,
+        };
+    }
+
+    /// <summary>Petakan <see cref="MediaKind"/> ke kolom <c>type</c> (Photo | Video | File).</summary>
+    private static string MapType(MediaKind kind) => kind switch
+    {
+        MediaKind.Photo => "Photo",
+        MediaKind.Video => "Video",
+        _ => "File",
+    };
 
     private static void ApplyDownloaded(MediaPart part, string path)
     {

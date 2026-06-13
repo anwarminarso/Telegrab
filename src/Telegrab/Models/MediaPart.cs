@@ -24,6 +24,48 @@ public partial class MediaPart : ObservableObject
     /// <summary>Id unik media di Telegram (id foto atau dokumen). Stabil antar sesi.</summary>
     public long MediaId => Photo?.id ?? Document?.id ?? 0;
 
+    // --- Metadata teknis (diisi saat mapping di TelegramService) ----------
+
+    /// <summary>Lebar (px) bila tersedia.</summary>
+    public int? Width { get; set; }
+
+    /// <summary>Tinggi (px) bila tersedia.</summary>
+    public int? Height { get; set; }
+
+    /// <summary>Durasi video dalam detik bila tersedia.</summary>
+    public double? DurationSeconds { get; set; }
+
+    /// <summary>Nama/identitas pengirim untuk tampilan.</summary>
+    public string? Sender { get; set; }
+
+    // --- Deskripsi (diisi oleh CaptionResolver) ---------------------------
+
+    /// <summary>Deskripsi efektif media.</summary>
+    public string? Caption { get; set; }
+
+    /// <summary>Asal deskripsi.</summary>
+    public CaptionSource CaptionSource { get; set; } = CaptionSource.None;
+
+    /// <summary>Id pesan asal caption (bila berbeda dari media).</summary>
+    public int? CaptionFromMessageId { get; set; }
+
+    /// <summary>Catatan tambahan (case 8) yang bukan caption utama.</summary>
+    public string? Note { get; set; }
+
+    /// <summary>Id pesan asal catatan tambahan.</summary>
+    public int? NoteFromMessageId { get; set; }
+
+    // --- Identitas untuk resolver -----------------------------------------
+
+    /// <summary>Id pesan yang dibalas (reply) oleh pesan asal media, bila ada.</summary>
+    public int? ReplyToMsgId { get; set; }
+
+    /// <summary>Id pengirim (peer) untuk pembandingan asosiasi lintas pesan.</summary>
+    public long? FromId { get; set; }
+
+    /// <summary>Nama penulis post (channel) bila ada.</summary>
+    public string? PostAuthor { get; set; }
+
     [ObservableProperty] private ImageSource? _thumbnail;
     [ObservableProperty] private bool _isDownloading;
     [ObservableProperty] private double _progress;

@@ -119,10 +119,18 @@
         <!-- ===================== KANAN: pesan ===================== -->
         <Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto" Padding="16,12">
 
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="2,4,2,10" ColumnSpacing="10">
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto" Margin="2,4,2,10" ColumnSpacing="10">
                 <Label Grid.Column="0" Text="{Binding CurrentTitle}" FontSize="20" FontFamily="OpenSansSemibold"
                        VerticalOptions="Center" LineBreakMode="TailTruncation" />
                 <Button Grid.Column="1" Style="{StaticResource IconSubtleButton}"
+                        mi:MauiIcon.Value="{mi:Material Description}"
+                        Command="{Binding OpenDocumentationCommand}"
+                        SemanticProperties.Description="Open documentation for this chat/topic" />
+                <Button Grid.Column="2" Style="{StaticResource IconSubtleButton}"
+                        mi:MauiIcon.Value="{mi:Material Settings}"
+                        Command="{Binding OpenConfigurationCommand}"
+                        SemanticProperties.Description="Open download configuration" />
+                <Button Grid.Column="3" Style="{StaticResource IconSubtleButton}"
                         mi:MauiIcon.Value="{mi:Material Refresh}"
                         Command="{Binding RefreshCommand}"
                         SemanticProperties.Description="Reload messages" />

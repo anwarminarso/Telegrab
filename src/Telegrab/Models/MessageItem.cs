@@ -16,6 +16,15 @@ public class MessageItem
     /// <summary>Id album Telegram (0 jika bukan bagian album).</summary>
     public long GroupedId { get; init; }
 
+    /// <summary>Id pesan yang dibalas (reply), null jika bukan reply. Untuk resolver.</summary>
+    public int? ReplyToMsgId { get; init; }
+
+    /// <summary>Id pengirim (peer) untuk pembandingan asosiasi lintas pesan.</summary>
+    public long? FromId { get; init; }
+
+    /// <summary>Nama penulis post (channel) bila ada. Untuk pembandingan pengirim.</summary>
+    public string? PostAuthor { get; init; }
+
     public ObservableCollection<MediaPart> Media { get; } = new();
     public bool HasMedia => Media.Count > 0;
     public bool IsAlbum => Media.Count > 1;
