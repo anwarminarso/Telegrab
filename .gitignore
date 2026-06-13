@@ -123,4 +123,3 @@ secrets.json
 
 # Telegrab UI test artifacts (screenshot bukti bug saat test gagal)
 tests/
-Audit.md

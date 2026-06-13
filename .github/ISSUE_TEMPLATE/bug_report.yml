@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a problem to help us improve Telegrab
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        **Do not include secrets or private data.** Never paste your `api_id` / `api_hash`,
+        the contents of `session.dat` or `appsettings.json`, or a populated `telegrab.db`.
+        Redact private conversations from screenshots. For security vulnerabilities, follow
+        [SECURITY.md](../blob/main/SECURITY.md) instead of opening a public issue.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened. Include error messages and the status bar text if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Your environment details.
+      value: |
+        - OS: Windows (build/version)
+        - Telegrab version:
+        - .NET SDK version:
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: |
+        Add any relevant logs or screenshots. Remember to redact private data
+        (chat contents, phone numbers, tokens, file paths that reveal identities).
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I removed all secrets and private data from this report.
+          required: true

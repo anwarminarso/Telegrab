@@ -1,0 +1,55 @@
+Telegrab
+Copyright (c) 2026 Anwar Minarso (a2n Technology)
+
+This product is licensed under the MIT License (see the LICENSE file).
+
+------------------------------------------------------------------------------
+Third-Party Notices
+------------------------------------------------------------------------------
+
+This software depends on third-party packages, each distributed under its own
+license. Telegrab does not modify these packages; they are referenced as NuGet
+dependencies. The list below is provided for attribution. Refer to each
+project for the authoritative license text.
+
+- .NET MAUI and Microsoft.Maui.Controls
+  Microsoft. Licensed under the MIT License.
+  https://github.com/dotnet/maui
+
+- Microsoft.Data.Sqlite (Entity Framework Core)
+  Microsoft. Licensed under the MIT License.
+  https://github.com/dotnet/efcore
+
+- Microsoft.Extensions.Logging
+  Microsoft. Licensed under the MIT License.
+  https://github.com/dotnet/runtime
+
+- WTelegramClient
+  Wizou (Olivier Marcoux). Licensed under the MIT License.
+  https://github.com/wiz0u/WTelegramClient
+
+- Markdig
+  Alexandre Mutel (xoofx). Licensed under the BSD 2-Clause License.
+  https://github.com/xoofx/markdig
+
+- CommunityToolkit.Mvvm (.NET Community Toolkit)
+  .NET Foundation and Contributors. Licensed under the MIT License.
+  https://github.com/CommunityToolkit/dotnet
+
+- CommunityToolkit.Maui and CommunityToolkit.Maui.MediaElement
+  .NET Foundation and Contributors. Licensed under the MIT License.
+  https://github.com/CommunityToolkit/Maui
+
+- AathifMahir.Maui.MauiIcons.Material
+  Aathif Mahir. Licensed under the MIT License.
+  https://github.com/AathifMahir/MauiIcons
+
+------------------------------------------------------------------------------
+
+SQLite itself is in the public domain (https://www.sqlite.org/copyright.html).
+
+Telegram is a trademark of Telegram Messenger Inc. Telegrab is an independent,
+unofficial client tool and is not affiliated with, endorsed by, or sponsored by
+Telegram.
+
+All product names, logos, and brands are property of their respective owners.
