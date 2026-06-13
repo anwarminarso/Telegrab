@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:toolkit="http://schemas.microsoft.com/dotnet/2022/maui/toolkit"
+             xmlns:mi="http://www.aathifmahir.com/dotnet/2022/maui/icons"
+             xmlns:models="clr-namespace:Telegrab.Models"
+             x:Class="Telegrab.Views.MediaViewerPage"
+             Title="Viewer"
+             BackgroundColor="#101010">
+    <Grid x:Name="Root">
+
+        <!-- Foto: zoom (scroll) + pan (drag) -->
+        <Grid x:Name="ImageContainer" IsClippedToBounds="True" IsVisible="False">
+            <Image x:Name="ImageView" Aspect="AspectFit"
+                   HorizontalOptions="Fill" VerticalOptions="Fill" />
+        </Grid>
+
+        <!-- Video: zoom (scroll) + pan (drag) -->
+        <Grid x:Name="VideoContainer" IsClippedToBounds="True" IsVisible="False">
+            <toolkit:MediaElement x:Name="VideoView"
+                                  ShouldAutoPlay="True" ShouldShowPlaybackControls="True"
+                                  HorizontalOptions="Fill" VerticalOptions="Fill" />
+        </Grid>
+
+        <ActivityIndicator x:Name="Loading" IsVisible="False" IsRunning="False"
+                           Color="White" HorizontalOptions="Center" VerticalOptions="Center" />
+
+        <!-- Lapisan klik-zona + swipe (kiri = prev, tengah = toggle kontrol, kanan = next).
+             Dinonaktifkan (InputTransparent) saat di-zoom atau saat memutar video,
+             agar tidak bentrok dengan pan & kontrol playback. -->
+        <Grid x:Name="TapLayer" ColumnDefinitions="*,*,*"
+              BackgroundColor="Transparent" InputTransparent="True">
+            <Grid.GestureRecognizers>
+                <SwipeGestureRecognizer Direction="Left" Swiped="OnSwipeLeft" />
+                <SwipeGestureRecognizer Direction="Right" Swiped="OnSwipeRight" />
+            </Grid.GestureRecognizers>
+
+            <Grid Grid.Column="0" BackgroundColor="Transparent">
+                <Grid.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnTapLeft" />
+                </Grid.GestureRecognizers>
+            </Grid>
+            <Grid Grid.Column="1" BackgroundColor="Transparent">
+                <Grid.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnTapCenter" />
+                </Grid.GestureRecognizers>
+            </Grid>
+            <Grid Grid.Column="2" BackgroundColor="Transparent">
+                <Grid.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnTapRight" />
+                </Grid.GestureRecognizers>
+            </Grid>
+        </Grid>
+
+        <!-- Chrome: SEMUA kontrol dibungkus di sini agar auto-hide bersama. -->
+        <Grid x:Name="Chrome">
+
+            <!-- Prev / Next -->
+            <Button x:Name="PrevButton" mi:MauiIcon.Value="{mi:Material ChevronLeft}" Clicked="OnPrev"
+                    WidthRequest="52" HeightRequest="52" CornerRadius="26" Padding="0"
+                    BackgroundColor="#66000000" TextColor="White"
+                    HorizontalOptions="Start" VerticalOptions="Center" Margin="16,0,0,0" />
+            <Button x:Name="NextButton" mi:MauiIcon.Value="{mi:Material ChevronRight}" Clicked="OnNext"
+                    WidthRequest="52" HeightRequest="52" CornerRadius="26" Padding="0"
+                    BackgroundColor="#66000000" TextColor="White"
+                    HorizontalOptions="End" VerticalOptions="Center" Margin="0,0,16,0" />
+
+            <!-- Top bar -->
+            <Grid VerticalOptions="Start" ColumnDefinitions="*,Auto" Padding="14,10">
+                <Label x:Name="CounterLabel" TextColor="White" FontSize="13" Opacity="0.85"
+                       VerticalOptions="Center" />
+                <Button Grid.Column="1" Text="✕" Clicked="OnClose"
+                        FontSize="16" WidthRequest="44" HeightRequest="44" CornerRadius="22" Padding="0"
+                        BackgroundColor="#66000000" TextColor="White" />
+            </Grid>
+
+            <!-- Filmstrip: thumbnail horizontal, item aktif di-highlight, tap untuk lompat. -->
+            <Border x:Name="FilmstripBar" VerticalOptions="End" IsVisible="False"
+                    BackgroundColor="#A6000000" Padding="0,6" StrokeThickness="0">
+                <CollectionView x:Name="Filmstrip" HeightRequest="72"
+                                SelectionMode="Single" SelectionChanged="OnFilmstripSelectionChanged"
+                                ItemSizingStrategy="MeasureFirstItem"><!-- ukur 1x: aman utk ribuan item -->
+                    <CollectionView.ItemsLayout>
+                        <LinearItemsLayout Orientation="Horizontal" ItemSpacing="0" />
+                    </CollectionView.ItemsLayout>
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="models:MediaPart">
+                            <Grid Padding="4,0">
+                                <Border x:Name="FrameBorder"
+                                        WidthRequest="60" HeightRequest="60"
+                                        BackgroundColor="#222222"
+                                        StrokeThickness="2" Stroke="Transparent"
+                                        StrokeShape="RoundRectangle 6">
+                                    <Grid>
+                                        <Image Source="{Binding Thumbnail}" Aspect="AspectFill"
+                                               HorizontalOptions="Fill" VerticalOptions="Fill" />
+                                        <Label Text="▶" IsVisible="{Binding IsVideo}"
+                                               TextColor="White" FontSize="20" Opacity="0.9"
+                                               HorizontalOptions="Center" VerticalOptions="Center" />
+                                    </Grid>
+                                </Border>
+
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="Selected">
+                                            <VisualState.Setters>
+                                                <Setter TargetName="FrameBorder"
+                                                        Property="Border.Stroke" Value="#3FA0FF" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </Border>
+        </Grid>
+
+        <!-- Deteksi gerak kursor untuk memunculkan kembali Chrome. -->
+        <Grid.GestureRecognizers>
+            <PointerGestureRecognizer PointerMoved="OnPointerMoved" />
+        </Grid.GestureRecognizers>
+    </Grid>
+</ContentPage>

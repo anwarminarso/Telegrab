@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="456" height="456" viewBox="0 0 456 456" version="1.1" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+    <g transform="translate(0,-20)">
+        <!-- Left wing (lit) -->
+        <polygon points="228,348 92,148 228,236" fill="#ffffff" />
+        <!-- Right wing (shadowed fold) -->
+        <polygon points="228,348 228,236 364,148" fill="#CDE7F8" />
+    </g>
+</svg>

@@ -1,0 +1,122 @@
+## .NET / Visual Studio / Rider .gitignore for a .NET MAUI project
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio cache/options directory
+.vs/
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# .NET restore / build
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.binlog
+
+# NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+# MSBuild
+*.tlog
+*.log
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.VisualState.xml
+TestResult.xml
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# .NET MAUI / Xamarin
+*.binlog
+*.appx
+*.appxbundle
+*.appxupload
+*.msix
+*.msixbundle
+*.ipa
+*.apk
+*.aab
+
+# Android
+*.keystore
+*.jks
+!**/Platforms/Android/Resources/**/*.keystore
+[Bb]in/
+[Oo]bj/
+
+# iOS / Mac
+*.mode1v3
+*.mode2v3
+*.pidb
+*.svclog
+xcuserdata/
+
+# Publish / deployment
+*.[Pp]ublish.xml
+*.azurePubxml
+*.pubxml
+*.pubxml.user
+publish/
+
+# Backup & temp files
+*.bak
+*.cache
+*.tmp
+*~
+*.swp
+
+# OS generated
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Secrets / local config (Telegram API credentials, sessions, etc.)
+*.session
+*.session-journal
+appsettings.*.json
+secrets.json
+*.env
+.env
+
+# AI IDE
+.kiro/
+.cursor/

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="MauiApp1/MauiApp1.csproj" Id="b15b2867-9db7-4be6-8d49-1633f35f4e48" />
+  <Project Path="Telegrab/Telegrab.csproj" />
+</Solution>

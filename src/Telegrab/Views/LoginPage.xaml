@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:mi="http://www.aathifmahir.com/dotnet/2022/maui/icons"
+             xmlns:vm="clr-namespace:Telegrab.ViewModels"
+             x:Class="Telegrab.Views.LoginPage"
+             x:DataType="vm:LoginViewModel"
+             NavigationPage.HasNavigationBar="False"
+             Title="Telegram Login">
+
+    <ScrollView>
+        <Grid Padding="24" RowDefinitions="*,Auto,*">
+
+            <!-- Kartu login terpusat -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="28"
+                    MaximumWidthRequest="440" HorizontalOptions="Center" VerticalOptions="Center">
+                <Border.Shadow>
+                    <Shadow Brush="#000000" Opacity="0.12" Radius="30" Offset="0,8" />
+                </Border.Shadow>
+
+                <VerticalStackLayout Spacing="6">
+
+                    <!-- Brand -->
+                    <Image Source="brandlogo.png" WidthRequest="64" HeightRequest="64"
+                           HorizontalOptions="Center" Margin="0,0,0,4" />
+
+                    <Label Text="Sign in to Telegram" FontSize="24" FontFamily="OpenSansSemibold"
+                           HorizontalOptions="Center" />
+                    <Label Text="Connect your account to start downloading media."
+                           Style="{StaticResource Secondary}" HorizontalTextAlignment="Center"
+                           HorizontalOptions="Center" Margin="0,0,0,12" />
+
+                    <!-- API ID -->
+                    <Label Text="API ID" Style="{StaticResource FieldLabel}" />
+                    <Border Style="{StaticResource InputBorder}">
+                        <Entry Text="{Binding ApiId}" Keyboard="Numeric" Placeholder="e.g. 27887733" />
+                    </Border>
+
+                    <!-- API Hash + toggle -->
+                    <Label Text="API Hash" Style="{StaticResource FieldLabel}" Margin="0,8,0,0" />
+                    <Border Style="{StaticResource InputBorder}" Padding="12,0,4,0">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Entry Grid.Column="0" Text="{Binding ApiHash}" Placeholder="32 hex characters"
+                                   IsPassword="{Binding ShowApiHash, Converter={StaticResource InvertedBool}}" />
+                            <Button Grid.Column="1" Padding="0" WidthRequest="38" HeightRequest="38"
+                                    BackgroundColor="Transparent"
+                                    TextColor="{AppThemeBinding Light={StaticResource TextSecondaryLight}, Dark={StaticResource TextSecondaryDark}}"
+                                    mi:MauiIcon.Value="{mi:Material Visibility}"
+                                    Command="{Binding ToggleShowHashCommand}"
+                                    SemanticProperties.Description="Show or hide API Hash" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Nomor HP -->
+                    <Label Text="Phone Number" Style="{StaticResource FieldLabel}" Margin="0,8,0,0" />
+                    <Border Style="{StaticResource InputBorder}">
+                        <Entry Text="{Binding PhoneNumber}" Keyboard="Telephone" Placeholder="+62812..." />
+                    </Border>
+
+                    <!-- Nama -->
+                    <Label Text="Name (optional, for new accounts)" Style="{StaticResource FieldLabel}" Margin="0,8,0,0" />
+                    <Border Style="{StaticResource InputBorder}">
+                        <Entry Text="{Binding Name}" Placeholder="Display name" />
+                    </Border>
+
+                    <!-- Bantuan -->
+                    <Label Style="{StaticResource Secondary}" Margin="2,8,0,0">
+                        <Label.FormattedText>
+                            <FormattedString>
+                                <Span Text="Don't have an API ID/Hash? " />
+                                <Span Text="Create one at my.telegram.org" TextColor="{StaticResource Accent}"
+                                      TextDecorations="Underline" />
+                            </FormattedString>
+                        </Label.FormattedText>
+                        <Label.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding OpenApiHelpCommand}" />
+                        </Label.GestureRecognizers>
+                    </Label>
+
+                    <!-- Tombol utama -->
+                    <Button Text="Sign In"
+                            Command="{Binding ConnectCommand}"
+                            IsEnabled="{Binding IsBusy, Converter={StaticResource InvertedBool}}"
+                            Margin="0,16,0,0" />
+
+                    <!-- Langkah lanjutan -->
+                    <VerticalStackLayout Spacing="6" Margin="0,8,0,0" IsVisible="{Binding NeedCode}">
+                        <Label Text="Verification Code" Style="{StaticResource FieldLabel}" />
+                        <Border Style="{StaticResource InputBorder}">
+                            <Entry Text="{Binding VerificationCode}" Keyboard="Numeric" Placeholder="Code from the Telegram app" />
+                        </Border>
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout Spacing="6" Margin="0,8,0,0" IsVisible="{Binding NeedPassword}">
+                        <Label Text="2FA Password" Style="{StaticResource FieldLabel}" />
+                        <Border Style="{StaticResource InputBorder}">
+                            <Entry Text="{Binding Password}" IsPassword="True" Placeholder="Account password" />
+                        </Border>
+                    </VerticalStackLayout>
+
+                    <Button Text="Continue" Style="{StaticResource GhostButton}"
+                            Command="{Binding SubmitCommand}"
+                            IsVisible="{Binding NeedInput}"
+                            Margin="0,8,0,0" />
+
+                    <ActivityIndicator IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}"
+                                       Color="{StaticResource Accent}" Margin="0,10,0,0" />
+
+                    <Label Text="{Binding Status}" Style="{StaticResource Secondary}"
+                           IsVisible="{Binding Status, Converter={StaticResource IsNotNull}}"
+                           LineBreakMode="WordWrap" Margin="0,8,0,0" />
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
+    </ScrollView>
+</ContentPage>

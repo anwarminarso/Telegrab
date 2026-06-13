@@ -1,0 +1,287 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:Telegrab"
+             xmlns:models="clr-namespace:Telegrab.Models"
+             xmlns:vm="clr-namespace:Telegrab.ViewModels"
+             xmlns:mi="http://www.aathifmahir.com/dotnet/2022/maui/icons"
+             x:Class="Telegrab.MainPage"
+             x:Name="Page"
+             x:DataType="vm:MainViewModel"
+             NavigationPage.HasNavigationBar="False"
+             Title="Telegrab">
+
+    <Grid ColumnDefinitions="320,*">
+
+        <!-- ===================== SIDEBAR: daftar chat ===================== -->
+        <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*" Padding="12"
+              BackgroundColor="{AppThemeBinding Light={StaticResource SidebarLight}, Dark={StaticResource SidebarDark}}">
+
+            <Label Grid.Row="0" Text="Chat" FontSize="20" FontFamily="OpenSansSemibold" Margin="6,4,6,12" />
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,0,0,10">
+                <Border Grid.Column="0" Style="{StaticResource InputBorder}">
+                    <Entry Text="{Binding ChatSearchQuery}" Placeholder="Search chats / groups..." />
+                </Border>
+                <Button Grid.Column="1" Style="{StaticResource IconAccentButton}"
+                        mi:MauiIcon.Value="{mi:Material Refresh}"
+                        Command="{Binding LoadChatsCommand}"
+                        SemanticProperties.Description="Reload chat list" />
+            </Grid>
+
+            <CollectionView Grid.Row="2" ItemsSource="{Binding Chats}">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="models:ChatItem">
+                        <VerticalStackLayout>
+
+                            <!-- Baris chat -->
+                            <Border Padding="8" Margin="0,1" StrokeThickness="0"
+                                    StrokeShape="RoundRectangle 12" BackgroundColor="Transparent">
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding IsActive}" Value="True">
+                                        <Setter Property="BackgroundColor"
+                                                Value="{AppThemeBinding Light={StaticResource RowSelectedLight}, Dark={StaticResource RowSelectedDark}}" />
+                                    </DataTrigger>
+                                </Border.Triggers>
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer
+                                        Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.SelectChatCommand}"
+                                        CommandParameter="{Binding .}" />
+                                </Border.GestureRecognizers>
+
+                                <Grid ColumnDefinitions="44,*,Auto" ColumnSpacing="10">
+                                    <!-- Avatar -->
+                                    <Border Grid.Column="0" WidthRequest="44" HeightRequest="44"
+                                            StrokeShape="RoundRectangle 22" StrokeThickness="0"
+                                            BackgroundColor="{StaticResource Accent}" VerticalOptions="Center">
+                                        <Grid>
+                                            <Image Source="{Binding Thumbnail}" Aspect="AspectFill"
+                                                   IsVisible="{Binding Thumbnail, Converter={StaticResource IsNotNull}}" />
+                                            <Label Text="{Binding Initial}" TextColor="White" FontAttributes="Bold"
+                                                   FontSize="16" HorizontalOptions="Center" VerticalOptions="Center"
+                                                   IsVisible="{Binding Thumbnail, Converter={StaticResource IsNull}}" />
+                                        </Grid>
+                                    </Border>
+
+                                    <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                                        <Label Text="{Binding Title}" FontSize="14.5" FontFamily="OpenSansSemibold"
+                                               LineBreakMode="TailTruncation" />
+                                        <Label Text="{Binding Kind}" Style="{StaticResource Secondary}" FontSize="11" />
+                                    </VerticalStackLayout>
+
+                                    <Label Grid.Column="2" Text="›" FontSize="18"
+                                           TextColor="{AppThemeBinding Light={StaticResource TextSecondaryLight}, Dark={StaticResource TextSecondaryDark}}"
+                                           VerticalOptions="Center" IsVisible="{Binding IsForum}" />
+                                </Grid>
+                            </Border>
+
+                            <!-- Topik (forum) -->
+                            <VerticalStackLayout IsVisible="{Binding IsExpanded}" Margin="44,2,0,6" Spacing="2"
+                                                 BindableLayout.ItemsSource="{Binding Topics}">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="models:TopicItem">
+                                        <Border Padding="8,6" StrokeThickness="0" StrokeShape="RoundRectangle 10"
+                                                BackgroundColor="Transparent">
+                                            <Border.Triggers>
+                                                <DataTrigger TargetType="Border" Binding="{Binding IsActive}" Value="True">
+                                                    <Setter Property="BackgroundColor"
+                                                            Value="{AppThemeBinding Light={StaticResource RowSelectedLight}, Dark={StaticResource RowSelectedDark}}" />
+                                                </DataTrigger>
+                                            </Border.Triggers>
+                                            <Border.GestureRecognizers>
+                                                <TapGestureRecognizer
+                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.SelectTopicCommand}"
+                                                    CommandParameter="{Binding .}" />
+                                            </Border.GestureRecognizers>
+                                            <HorizontalStackLayout Spacing="8">
+                                                <Grid WidthRequest="16" HeightRequest="16" VerticalOptions="Center">
+                                                    <Image Source="{Binding Icon}" Aspect="AspectFit"
+                                                           IsVisible="{Binding Icon, Converter={StaticResource IsNotNull}}" />
+                                                    <Border WidthRequest="12" HeightRequest="12"
+                                                            StrokeThickness="0" StrokeShape="RoundRectangle 6"
+                                                            BackgroundColor="{Binding IconColorValue}"
+                                                            HorizontalOptions="Center" VerticalOptions="Center"
+                                                            IsVisible="{Binding Icon, Converter={StaticResource IsNull}}" />
+                                                </Grid>
+                                                <Label Text="{Binding Title}" FontSize="13" VerticalOptions="Center"
+                                                       TextColor="{AppThemeBinding Light={StaticResource TextSecondaryLight}, Dark={StaticResource TextSecondaryDark}}" />
+                                            </HorizontalStackLayout>
+                                        </Border>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </VerticalStackLayout>
+                        </VerticalStackLayout>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </Grid>
+
+        <!-- ===================== KANAN: pesan ===================== -->
+        <Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto" Padding="16,12">
+
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="2,4,2,10" ColumnSpacing="10">
+                <Label Grid.Column="0" Text="{Binding CurrentTitle}" FontSize="20" FontFamily="OpenSansSemibold"
+                       VerticalOptions="Center" LineBreakMode="TailTruncation" />
+                <Button Grid.Column="1" Style="{StaticResource IconSubtleButton}"
+                        mi:MauiIcon.Value="{mi:Material Refresh}"
+                        Command="{Binding RefreshCommand}"
+                        SemanticProperties.Description="Reload messages" />
+            </Grid>
+
+            <!-- Pencarian pesan -->
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" Margin="0,0,0,10">
+                <Border Grid.Column="0" Style="{StaticResource InputBorder}">
+                    <Entry Text="{Binding SearchQuery}" Placeholder="Search messages in this chat/topic..."
+                           ReturnCommand="{Binding SearchCommand}" />
+                </Border>
+                <Button Grid.Column="1" Style="{StaticResource IconAccentButton}"
+                        mi:MauiIcon.Value="{mi:Material Search}" Command="{Binding SearchCommand}"
+                        SemanticProperties.Description="Search messages" />
+                <Button Grid.Column="2" Style="{StaticResource IconSubtleButton}"
+                        mi:MauiIcon.Value="{mi:Material Close}" Command="{Binding ClearSearchCommand}"
+                        SemanticProperties.Description="Clear search" />
+            </Grid>
+
+            <!-- Bar folder download -->
+            <Border Grid.Row="2" Style="{StaticResource InputBorder}" Padding="14,6" Margin="0,0,0,12">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                    <mi:MauiIcon Grid.Column="0" Icon="{mi:Material Folder}" IconSize="18"
+                                 IconColor="{StaticResource Accent}" VerticalOptions="Center" />
+                    <Label Grid.Column="1" Text="{Binding DownloadFolder}" Style="{StaticResource Secondary}"
+                           VerticalOptions="Center" LineBreakMode="MiddleTruncation" />
+                    <Button Grid.Column="2" Text="Change" Style="{StaticResource GhostButton}"
+                            Padding="14,6" MinimumHeightRequest="34" FontSize="12"
+                            Command="{Binding ChangeDownloadFolderCommand}" />
+                </Grid>
+            </Border>
+
+            <!-- Daftar pesan -->
+            <CollectionView Grid.Row="3" x:Name="MessagesView" ItemsSource="{Binding Messages}"
+                            ItemsUpdatingScrollMode="KeepScrollOffset"
+                            RemainingItemsThreshold="3"
+                            RemainingItemsThresholdReachedCommand="{Binding LoadMoreCommand}">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="models:MessageItem">
+                        <Border Style="{StaticResource MessageCard}" Margin="0,5">
+                            <VerticalStackLayout Spacing="6">
+                                <Label Text="{Binding DateText}" Style="{StaticResource Secondary}" FontSize="11" />
+                                <Label Text="{Binding Text}" IsVisible="{Binding HasText}"
+                                       LineBreakMode="WordWrap" MaxLines="6" />
+
+                                <FlexLayout Wrap="Wrap" IsVisible="{Binding HasMedia}"
+                                            BindableLayout.ItemsSource="{Binding Media}">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="models:MediaPart">
+                                            <VerticalStackLayout Margin="0,4,8,0" WidthRequest="112" Spacing="4">
+                                                <Border WidthRequest="112" HeightRequest="112" StrokeThickness="0"
+                                                        StrokeShape="RoundRectangle 12"
+                                                        BackgroundColor="{AppThemeBinding Light={StaticResource InputBgLight}, Dark={StaticResource InputBgDark}}">
+                                                    <Grid>
+                                                        <Image Source="{Binding Thumbnail}" Aspect="AspectFill">
+                                                            <Image.GestureRecognizers>
+                                                                <TapGestureRecognizer
+                                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.OpenPartCommand}"
+                                                                    CommandParameter="{Binding .}" />
+                                                            </Image.GestureRecognizers>
+                                                        </Image>
+                                                        <mi:MauiIcon Icon="{mi:Material PlayCircle}" IconColor="White" IconSize="34"
+                                                                     HorizontalOptions="Center" VerticalOptions="Center"
+                                                                     IsVisible="{Binding IsVideo}" InputTransparent="True" />
+                                                        <Border IsVisible="{Binding IsDownloaded}" InputTransparent="True"
+                                                                WidthRequest="24" HeightRequest="24"
+                                                                StrokeThickness="0" StrokeShape="RoundRectangle 12"
+                                                                BackgroundColor="#2ECC71"
+                                                                Margin="6" HorizontalOptions="End" VerticalOptions="Start">
+                                                            <mi:MauiIcon Icon="{mi:Material Check}" IconColor="White" IconSize="14"
+                                                                         HorizontalOptions="Center" VerticalOptions="Center" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Border>
+                                                <Button mi:MauiIcon.Value="{mi:Material Download}" Text="Download"
+                                                        Style="{StaticResource GhostButton}"
+                                                        FontSize="11" Padding="6,0" HeightRequest="32" MinimumHeightRequest="32"
+                                                        Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.DownloadPartCommand}"
+                                                        CommandParameter="{Binding .}" />
+                                                <ProgressBar Progress="{Binding Progress}" IsVisible="{Binding IsDownloading}"
+                                                             ProgressColor="{StaticResource Accent}" />
+                                                <Label Text="{Binding SizeText}" Style="{StaticResource Secondary}"
+                                                       FontSize="10" HorizontalOptions="Center" />
+                                            </VerticalStackLayout>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </FlexLayout>
+
+                                <Button mi:MauiIcon.Value="{mi:Material DownloadForOffline}" Text="Download all media"
+                                        Style="{StaticResource GhostButton}"
+                                        FontSize="11" Padding="10,4" MinimumHeightRequest="30" CornerRadius="9"
+                                        HorizontalOptions="Start" Margin="0,4,0,0"
+                                        IsVisible="{Binding IsAlbum}"
+                                        Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.DownloadMessageCommand}"
+                                        CommandParameter="{Binding .}" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+            <Grid Grid.Row="4" ColumnDefinitions="*,Auto" Margin="0,10,0,4" ColumnSpacing="10">
+                <HorizontalStackLayout Grid.Column="0" Spacing="8" VerticalOptions="Center">
+                    <ActivityIndicator IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}"
+                                       WidthRequest="16" HeightRequest="16" Color="{StaticResource Accent}"
+                                       VerticalOptions="Center" />
+                    <Label Text="— All messages loaded —" Style="{StaticResource Secondary}"
+                           FontSize="12" VerticalOptions="Center" IsVisible="{Binding AllLoaded}" />
+                </HorizontalStackLayout>
+                <Button Grid.Column="1" mi:MauiIcon.Value="{mi:Material DownloadForOffline}" Text="Download all"
+                        FontSize="12" Padding="16,6" MinimumHeightRequest="36" HorizontalOptions="End"
+                        Command="{Binding DownloadAllLoadedCommand}"
+                        SemanticProperties.Description="Queue all loaded media for download" />
+            </Grid>
+            <!-- ===================== Panel antrian unduh ===================== -->
+            <Border Grid.Row="5" IsVisible="{Binding Queue.HasJobs}" Style="{StaticResource InputBorder}"
+                    Padding="12,8" Margin="0,8,0,0">
+                <VerticalStackLayout Spacing="6">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+                        <ActivityIndicator Grid.Column="0" IsRunning="{Binding Queue.IsRunning}"
+                                           IsVisible="{Binding Queue.IsRunning}" WidthRequest="16" HeightRequest="16"
+                                           Color="{StaticResource Accent}" VerticalOptions="Center" />
+                        <Label Grid.Column="1" Text="{Binding Queue.Summary}" VerticalOptions="Center"
+                               FontSize="12" LineBreakMode="TailTruncation" />
+                        <Button Grid.Column="2" Text="Cancel all" Style="{StaticResource GhostButton}"
+                                FontSize="11" Padding="10,4" MinimumHeightRequest="28" CornerRadius="9"
+                                Command="{Binding CancelAllJobsCommand}" />
+                        <Button Grid.Column="3" Text="Clear" Style="{StaticResource GhostButton}"
+                                FontSize="11" Padding="10,4" MinimumHeightRequest="28" CornerRadius="9"
+                                Command="{Binding ClearFinishedJobsCommand}" />
+                    </Grid>
+
+                    <CollectionView ItemsSource="{Binding Queue.Jobs}" MaximumHeightRequest="150">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="models:DownloadJob">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" Padding="0,3">
+                                    <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                        <Label Text="{Binding FileName}" FontSize="12"
+                                               LineBreakMode="MiddleTruncation" />
+                                        <Label Text="{Binding StatusText}" Style="{StaticResource Secondary}"
+                                               FontSize="10.5" LineBreakMode="TailTruncation" />
+                                        <ProgressBar Progress="{Binding Progress}" IsVisible="{Binding IsActive}"
+                                                     ProgressColor="{StaticResource Accent}" />
+                                    </VerticalStackLayout>
+                                    <Button Grid.Column="1" mi:MauiIcon.Value="{mi:Material Close}"
+                                            Style="{StaticResource IconSubtleButton}"
+                                            IsVisible="{Binding CanCancel}"
+                                            Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.CancelJobCommand}"
+                                            CommandParameter="{Binding .}"
+                                            SemanticProperties.Description="Cancel this download" />
+                                </Grid>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+            </Border>
+
+            <Label Grid.Row="6" Text="{Binding Status}" Style="{StaticResource Secondary}"
+                   Margin="2,2,2,0" LineBreakMode="WordWrap" />
+        </Grid>
+    </Grid>
+</ContentPage>
