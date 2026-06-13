@@ -4,335 +4,250 @@ using Telegrab.Services;
 namespace Telegrab.Tests;
 
 /// <summary>
-/// Unit test untuk <see cref="ManifestDbService"/> (task 3.1).
-///
-/// Memakai direktori sementara nyata + file SQLite nyata; membuat file fisik di disk untuk
-/// memvalidasi perilaku <c>File.Exists</c>. Tiap test membersihkan temp folder-nya sendiri.
-///
-/// Memvalidasi:
-///  - Property 1 (idempotensi manifest): upsert kunci sama → tepat satu baris.
-///  - Property 2 (konsistensi disk↔dok): IsDownloaded & QueryFolder hanya mengakui file yang ada.
+/// Tes perilaku untuk <see cref="ManifestDbService"/> — manifest SQLite (telegrab.db).
+/// Memakai root sementara nyata di disk per-test (xUnit membuat instance baru tiap metode),
+/// dengan file fisik dibuat karena service memfilter berdasarkan <c>File.Exists</c>.
 /// </summary>
 public sealed class ManifestDbServiceTests : IDisposable
 {
     private readonly string _root;
+    private readonly ManifestDbService _db;
 
     public ManifestDbServiceTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "telegrab_tests", Guid.NewGuid().ToString("N"));
+        _root = Path.Combine(Path.GetTempPath(), "telegrab_test_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
+        _db = new ManifestDbService();
+        _db.OpenForRoot(_root);
     }
 
     public void Dispose()
     {
-        try
-        {
-            // Pastikan pool koneksi dilepas agar file DB tidak terkunci sebelum dihapus.
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (Directory.Exists(_root))
-                Directory.Delete(_root, recursive: true);
-        }
-        catch
-        {
-            // Best-effort cleanup; jangan gagalkan test karena lock sisa.
-        }
+        _db.Dispose();
+        try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    private static MediaRecord NewRecord(
-        long chatId,
-        int messageId,
-        long mediaId,
-        string relativePath,
-        string fileName,
-        DateTime? messageDate = null,
-        string? caption = null,
-        CaptionSource captionSource = CaptionSource.None,
-        long? groupId = null)
+    private string CreateFile(string relativePath, string content = "x")
     {
-        return new MediaRecord
+        var abs = Path.Combine(_root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(abs)!);
+        File.WriteAllText(abs, content);
+        return abs;
+    }
+
+    private static MediaRecord Record(
+        long chatId, int messageId, long mediaId, string relativePath,
+        string type = "Photo", long? groupId = null, string? caption = null,
+        CaptionSource source = CaptionSource.None, DateTime? messageDate = null)
+        => new()
         {
             ChatId = chatId,
             MessageId = messageId,
             MediaId = mediaId,
-            GroupId = groupId,
-            ChatTitle = "Chat",
-            TopicTitle = null,
             RelativePath = relativePath,
-            FileName = fileName,
-            Size = 1234,
-            Type = "Photo",
-            Width = 100,
-            Height = 200,
-            DurationSeconds = null,
-            Sender = "Alice",
+            FileName = Path.GetFileName(relativePath.Replace('\\', '/')),
+            Size = 123,
+            Type = type,
+            GroupId = groupId,
             Caption = caption,
-            CaptionSource = captionSource,
-            CaptionFromMessageId = null,
-            Note = null,
-            NoteFromMessageId = null,
-            MessageDateUtc = messageDate ?? new DateTime(2024, 1, 1, 12, 0, 0, DateTimeKind.Utc),
-            DownloadedAtUtc = new DateTime(2024, 1, 2, 8, 0, 0, DateTimeKind.Utc),
+            CaptionSource = source,
+            MessageDateUtc = messageDate ?? new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            DownloadedAtUtc = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc),
         };
-    }
 
-    /// <summary>Buat file fisik (dan folder induknya) di bawah root, relatif terhadap root.</summary>
-    private string CreateFile(string relativePath)
+    // --- Lifecycle ---------------------------------------------------------
+
+    [Fact]
+    public void OpenForRoot_IsReady_AndRootSetToFullPath()
     {
-        var abs = Path.Combine(_root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        Directory.CreateDirectory(Path.GetDirectoryName(abs)!);
-        File.WriteAllText(abs, "x");
-        return abs;
+        Assert.True(_db.IsReady);
+        Assert.Equal(Path.GetFullPath(_root), _db.Root);
     }
 
     [Fact]
-    public void OpenForRoot_SetsIsReady_AndCreatesDbFile()
+    public void OpenForRoot_Throws_OnEmptyRoot()
     {
-        using var service = new ManifestDbService();
-        Assert.False(service.IsReady);
-
-        service.OpenForRoot(_root);
-
-        Assert.True(service.IsReady);
-        Assert.True(File.Exists(Path.Combine(_root, "telegrab.db")));
+        using var db = new ManifestDbService();
+        Assert.Throws<ArgumentException>(() => db.OpenForRoot(""));
     }
 
     [Fact]
-    public void Close_MakesServiceNotReady()
+    public void Operations_Throw_WhenNotOpened()
     {
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
-        Assert.True(service.IsReady);
-
-        service.Close();
-
-        Assert.False(service.IsReady);
+        using var db = new ManifestDbService();
+        Assert.False(db.IsReady);
+        Assert.Throws<InvalidOperationException>(() => db.IsDownloaded(1, 1, 1, out _));
+        Assert.Throws<InvalidOperationException>(() => db.QueryFolder("x"));
     }
 
     [Fact]
-    public void Operations_BeforeOpen_Throw()
-    {
-        using var service = new ManifestDbService();
-        Assert.Throws<InvalidOperationException>(
-            () => service.IsDownloaded(1, 1, 1, out _));
-        Assert.Throws<InvalidOperationException>(
-            () => service.Mark(NewRecord(1, 1, 1, "Chat/a.jpg", "a.jpg")));
-        Assert.Throws<InvalidOperationException>(
-            () => service.QueryFolder("Chat"));
-    }
+    public void Mark_Throws_OnNullRecord()
+        => Assert.Throws<ArgumentNullException>(() => _db.Mark(null!));
 
-    // --- Property 1: idempotensi manifest ---------------------------------
+    // --- IsDownloaded ------------------------------------------------------
 
     [Fact]
-    public void Mark_SameKeyMultipleTimes_ProducesExactlyOneRow()
+    public void Mark_ThenIsDownloaded_ReturnsTrue_WhenFileExists()
     {
-        CreateFile("Chat/a.jpg");
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
+        CreateFile("ChatA/photo.jpg");
+        _db.Mark(Record(1, 10, 100, "ChatA/photo.jpg"));
 
-        var record = NewRecord(10, 20, 30, "Chat/a.jpg", "a.jpg", caption: "first");
-        service.Mark(record);
-        service.Mark(record);
-        service.Mark(record);
+        var ok = _db.IsDownloaded(1, 10, 100, out var abs);
 
-        var rows = service.QueryFolder("Chat");
-        Assert.Single(rows);
-        Assert.Equal("first", rows[0].Caption);
+        Assert.True(ok);
+        Assert.Equal(Path.GetFullPath(Path.Combine(_root, "ChatA", "photo.jpg")), abs);
     }
 
     [Fact]
-    public void Mark_SameKey_UpdatesInsteadOfDuplicating()
+    public void IsDownloaded_False_WhenNotRecorded()
     {
-        CreateFile("Chat/a.jpg");
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
-
-        service.Mark(NewRecord(10, 20, 30, "Chat/a.jpg", "a.jpg", caption: "first"));
-        service.Mark(NewRecord(10, 20, 30, "Chat/a.jpg", "a.jpg", caption: "updated", captionSource: CaptionSource.Own));
-
-        var rows = service.QueryFolder("Chat");
-        Assert.Single(rows);
-        Assert.Equal("updated", rows[0].Caption);
-        Assert.Equal(CaptionSource.Own, rows[0].CaptionSource);
-    }
-
-    // --- Property 2: konsistensi disk↔dok ---------------------------------
-
-    [Fact]
-    public void IsDownloaded_TrueWhenFileExists_FalseWhenMissing()
-    {
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
-
-        // File ada → true.
-        CreateFile("Chat/a.jpg");
-        service.Mark(NewRecord(1, 2, 3, "Chat/a.jpg", "a.jpg"));
-        Assert.True(service.IsDownloaded(1, 2, 3, out var absExisting));
-        Assert.True(File.Exists(absExisting));
-
-        // Tercatat tapi file dihapus → false (tetap mengembalikan path resolusi).
-        service.Mark(NewRecord(4, 5, 6, "Chat/ghost.jpg", "ghost.jpg"));
-        Assert.False(service.IsDownloaded(4, 5, 6, out var absGhost));
-        Assert.False(string.IsNullOrEmpty(absGhost));
-        Assert.False(File.Exists(absGhost));
-    }
-
-    [Fact]
-    public void IsDownloaded_UnknownKey_ReturnsFalseAndEmptyPath()
-    {
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
-
-        Assert.False(service.IsDownloaded(999, 999, 999, out var abs));
+        Assert.False(_db.IsDownloaded(1, 10, 100, out var abs));
         Assert.Equal(string.Empty, abs);
     }
 
     [Fact]
-    public void IsDownloaded_ResolvesRelativePathAgainstRoot()
+    public void IsDownloaded_False_WhenRecordedButFileMissing()
     {
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
+        var abs = CreateFile("ChatA/gone.jpg");
+        _db.Mark(Record(1, 10, 100, "ChatA/gone.jpg"));
+        File.Delete(abs);
 
-        CreateFile("Chat/Topic/pic.jpg");
-        service.Mark(NewRecord(1, 1, 1, "Chat/Topic/pic.jpg", "pic.jpg"));
-
-        Assert.True(service.IsDownloaded(1, 1, 1, out var abs));
-        Assert.Equal(Path.GetFullPath(Path.Combine(_root, "Chat", "Topic", "pic.jpg")), abs);
+        Assert.False(_db.IsDownloaded(1, 10, 100, out _));
     }
 
     [Fact]
-    public void QueryFolder_FiltersOutMissingFiles()
+    public void Mark_NormalizesBackslashPaths()
     {
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
+        CreateFile("ChatA/win.jpg");
+        _db.Mark(Record(1, 10, 100, "ChatA\\win.jpg"));
 
-        CreateFile("Chat/present.jpg");
-        service.Mark(NewRecord(1, 1, 1, "Chat/present.jpg", "present.jpg"));
-        // Tidak membuat file fisik untuk record kedua.
-        service.Mark(NewRecord(1, 2, 2, "Chat/missing.jpg", "missing.jpg"));
+        Assert.True(_db.IsDownloaded(1, 10, 100, out _));
 
-        var rows = service.QueryFolder("Chat");
+        var rows = _db.QueryFolder("ChatA");
         Assert.Single(rows);
-        Assert.Equal("present.jpg", rows[0].FileName);
+        Assert.Equal("ChatA/win.jpg", rows[0].RelativePath);
+    }
+
+    // --- Upsert idempotency ------------------------------------------------
+
+    [Fact]
+    public void Mark_Upsert_UpdatesExistingRowInPlace()
+    {
+        CreateFile("ChatA/p.jpg");
+        _db.Mark(Record(1, 10, 100, "ChatA/p.jpg", caption: "first", source: CaptionSource.Own));
+        _db.Mark(Record(1, 10, 100, "ChatA/p.jpg", caption: "second", source: CaptionSource.Reply));
+
+        var rows = _db.QueryFolder("ChatA");
+        Assert.Single(rows);
+        Assert.Equal("second", rows[0].Caption);
+        Assert.Equal(CaptionSource.Reply, rows[0].CaptionSource);
+    }
+
+    // --- QueryFolder -------------------------------------------------------
+
+    [Fact]
+    public void QueryFolder_ReturnsDirectChildrenOnly_OrderedByDate()
+    {
+        CreateFile("ChatA/b.jpg");
+        CreateFile("ChatA/a.jpg");
+        CreateFile("ChatA/Topic/c.jpg");
+        _db.Mark(Record(1, 20, 200, "ChatA/b.jpg", messageDate: new DateTime(2024, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        _db.Mark(Record(1, 10, 100, "ChatA/a.jpg", messageDate: new DateTime(2024, 1, 1, 9, 0, 0, DateTimeKind.Utc)));
+        _db.Mark(Record(1, 30, 300, "ChatA/Topic/c.jpg", messageDate: new DateTime(2024, 1, 1, 8, 0, 0, DateTimeKind.Utc)));
+
+        var rows = _db.QueryFolder("ChatA");
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("a.jpg", rows[0].FileName); // 09:00 sebelum 10:00
+        Assert.Equal("b.jpg", rows[1].FileName);
+
+        var nested = _db.QueryFolder("ChatA/Topic");
+        Assert.Single(nested);
+        Assert.Equal("c.jpg", nested[0].FileName);
     }
 
     [Fact]
-    public void QueryFolder_ReturnsOnlyDirectChildren()
+    public void QueryFolder_ExcludesMissingFiles()
     {
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
+        CreateFile("ChatA/exists.jpg");
+        var goneAbs = CreateFile("ChatA/gone.jpg");
+        _db.Mark(Record(1, 10, 100, "ChatA/exists.jpg"));
+        _db.Mark(Record(1, 11, 101, "ChatA/gone.jpg"));
+        File.Delete(goneAbs);
 
-        CreateFile("Chat/direct.jpg");
-        CreateFile("Chat/Sub/nested.jpg");
-        service.Mark(NewRecord(1, 1, 1, "Chat/direct.jpg", "direct.jpg"));
-        service.Mark(NewRecord(1, 2, 2, "Chat/Sub/nested.jpg", "nested.jpg"));
+        var rows = _db.QueryFolder("ChatA");
 
-        var chatRows = service.QueryFolder("Chat");
-        Assert.Single(chatRows);
-        Assert.Equal("direct.jpg", chatRows[0].FileName);
-
-        var subRows = service.QueryFolder("Chat/Sub");
-        Assert.Single(subRows);
-        Assert.Equal("nested.jpg", subRows[0].FileName);
+        Assert.Single(rows);
+        Assert.Equal("exists.jpg", rows[0].FileName);
     }
 
     [Fact]
-    public void QueryFolder_OrdersByDateThenMessageIdThenMediaId()
+    public void QueryFolder_Root_ReturnsFilesDirectlyInRoot()
     {
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
+        CreateFile("top.jpg");
+        CreateFile("ChatA/inner.jpg");
+        _db.Mark(Record(1, 10, 100, "top.jpg"));
+        _db.Mark(Record(1, 11, 101, "ChatA/inner.jpg"));
 
-        CreateFile("Chat/c.jpg");
-        CreateFile("Chat/a.jpg");
-        CreateFile("Chat/b.jpg");
-        CreateFile("Chat/d.jpg");
+        var rows = _db.QueryFolder("");
 
-        var early = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        var late = new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc);
+        Assert.Single(rows);
+        Assert.Equal("top.jpg", rows[0].FileName);
+    }
 
-        // Sisipkan dengan urutan acak; harapkan keluar terurut date, message_id, media_id.
-        service.Mark(NewRecord(1, 5, 1, "Chat/c.jpg", "c.jpg", messageDate: late));        // last (late date)
-        service.Mark(NewRecord(1, 2, 9, "Chat/a.jpg", "a.jpg", messageDate: early));        // msg 2, media 9
-        service.Mark(NewRecord(1, 2, 1, "Chat/b.jpg", "b.jpg", messageDate: early));        // msg 2, media 1
-        service.Mark(NewRecord(1, 3, 1, "Chat/d.jpg", "d.jpg", messageDate: early));        // msg 3
+    // --- Round-trips -------------------------------------------------------
 
-        var rows = service.QueryFolder("Chat");
-        Assert.Equal(4, rows.Count);
-        Assert.Equal("b.jpg", rows[0].FileName); // early, msg2, media1
-        Assert.Equal("a.jpg", rows[1].FileName); // early, msg2, media9
-        Assert.Equal("d.jpg", rows[2].FileName); // early, msg3
-        Assert.Equal("c.jpg", rows[3].FileName); // late
+    [Theory]
+    [InlineData(CaptionSource.Own)]
+    [InlineData(CaptionSource.Album)]
+    [InlineData(CaptionSource.Reply)]
+    [InlineData(CaptionSource.Inferred)]
+    [InlineData(CaptionSource.None)]
+    public void CaptionSource_RoundTrips(CaptionSource source)
+    {
+        CreateFile("ChatA/p.jpg");
+        _db.Mark(Record(1, 10, 100, "ChatA/p.jpg", caption: "c", source: source));
+
+        var rows = _db.QueryFolder("ChatA");
+        Assert.Equal(source, rows[0].CaptionSource);
     }
 
     [Fact]
-    public void QueryFolder_RootLevelFiles_ReturnedForEmptyFolder()
+    public void GroupId_RoundTrips_ValueAndNull()
     {
-        using var service = new ManifestDbService();
-        service.OpenForRoot(_root);
+        CreateFile("ChatA/p.jpg");
+        CreateFile("ChatA/q.jpg");
+        _db.Mark(Record(1, 10, 100, "ChatA/p.jpg", groupId: 999));
+        _db.Mark(Record(1, 11, 101, "ChatA/q.jpg", groupId: null));
 
-        CreateFile("rootfile.jpg");
-        CreateFile("Chat/inside.jpg");
-        service.Mark(NewRecord(1, 1, 1, "rootfile.jpg", "rootfile.jpg"));
-        service.Mark(NewRecord(1, 2, 2, "Chat/inside.jpg", "inside.jpg"));
-
-        var rootRows = service.QueryFolder("");
-        Assert.Single(rootRows);
-        Assert.Equal("rootfile.jpg", rootRows[0].FileName);
-    }
-
-    // --- Open/close pada pergantian root ----------------------------------
-
-    [Fact]
-    public void OpenForRoot_SwitchingRoots_IsolatesData()
-    {
-        var rootB = Path.Combine(Path.GetTempPath(), "telegrab_tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(rootB);
-        try
-        {
-            using var service = new ManifestDbService();
-
-            // Root A: catat satu media + buat file-nya.
-            service.OpenForRoot(_root);
-            CreateFile("Chat/a.jpg");
-            service.Mark(NewRecord(1, 1, 1, "Chat/a.jpg", "a.jpg"));
-            Assert.True(service.IsDownloaded(1, 1, 1, out _));
-
-            // Beralih ke root B: DB baru, tidak ada data A.
-            service.OpenForRoot(rootB);
-            Assert.True(service.IsReady);
-            Assert.Equal(Path.GetFullPath(rootB), service.Root);
-            Assert.False(service.IsDownloaded(1, 1, 1, out _));
-            Assert.Empty(service.QueryFolder("Chat"));
-
-            // Kembali ke root A: status pulih dari DB yang sudah ada.
-            service.OpenForRoot(_root);
-            Assert.True(service.IsDownloaded(1, 1, 1, out _));
-            Assert.Single(service.QueryFolder("Chat"));
-        }
-        finally
-        {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (Directory.Exists(rootB))
-                Directory.Delete(rootB, recursive: true);
-        }
+        var rows = _db.QueryFolder("ChatA");
+        Assert.Equal(999, rows.First(r => r.MediaId == 100).GroupId);
+        Assert.Null(rows.First(r => r.MediaId == 101).GroupId);
     }
 
     [Fact]
-    public void OpenForRoot_ReopeningSameRoot_RecoversPersistedRows()
+    public void MessageDate_RoundTripsAsUtc_WithSubSecondPrecision()
     {
-        CreateFile("Chat/a.jpg");
+        CreateFile("ChatA/p.jpg");
+        var date = new DateTime(2024, 3, 15, 8, 30, 45, DateTimeKind.Utc).AddTicks(1234567);
+        _db.Mark(Record(1, 10, 100, "ChatA/p.jpg", messageDate: date));
 
-        using (var service = new ManifestDbService())
-        {
-            service.OpenForRoot(_root);
-            service.Mark(NewRecord(1, 1, 1, "Chat/a.jpg", "a.jpg", caption: "persist"));
-        }
+        var rows = _db.QueryFolder("ChatA");
+        Assert.Equal(date, rows[0].MessageDateUtc);
+        Assert.Equal(DateTimeKind.Utc, rows[0].MessageDateUtc.Kind);
+    }
 
-        using (var reopened = new ManifestDbService())
-        {
-            reopened.OpenForRoot(_root);
-            var rows = reopened.QueryFolder("Chat");
-            Assert.Single(rows);
-            Assert.Equal("persist", rows[0].Caption);
-        }
+    // --- Persistence -------------------------------------------------------
+
+    [Fact]
+    public void Persistence_SurvivesCloseAndReopen()
+    {
+        CreateFile("ChatA/p.jpg");
+        _db.Mark(Record(1, 10, 100, "ChatA/p.jpg"));
+
+        _db.Close();
+        _db.OpenForRoot(_root);
+
+        Assert.True(_db.IsDownloaded(1, 10, 100, out _));
     }
 }

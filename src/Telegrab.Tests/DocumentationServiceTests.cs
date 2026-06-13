@@ -83,7 +83,7 @@ public sealed class DocumentationServiceTests
         // Konten lama hilang, konten baru masuk.
         Assert.DoesNotContain("KONTEN LAMA", result);
         Assert.Contains("halo", result);
-        Assert.Contains("[a.jpg](a.jpg)", result);
+        Assert.Contains("![a.jpg](a.jpg", result);
     }
 
     [Fact]
@@ -176,8 +176,8 @@ public sealed class DocumentationServiceTests
 
         var result = Render(records, null);
 
-        Assert.Contains("[present1.jpg](present1.jpg)", result);
-        Assert.Contains("[present2.jpg](present2.jpg)", result);
+        Assert.Contains("![present1.jpg](present1.jpg \"present1.jpg · 1 KB\"){width=180px}", result);
+        Assert.Contains("![present2.jpg](present2.jpg \"present2.jpg · 1 KB\"){width=180px}", result);
         // Tidak ada entri lain yang muncul.
         Assert.DoesNotContain("missing", result);
     }
@@ -215,10 +215,10 @@ public sealed class DocumentationServiceTests
         var captionCount = CountOccurrences(result, "deskripsi album");
         Assert.Equal(1, captionCount);
 
-        // Semua anggota album terdaftar sebagai item file.
-        Assert.Contains("[alb1.jpg](alb1.jpg)", result);
-        Assert.Contains("[alb2.jpg](alb2.jpg)", result);
-        Assert.Contains("[alb3.jpg](alb3.jpg)", result);
+        // Semua anggota album terdaftar sebagai gambar galeri natif.
+        Assert.Contains("![alb1.jpg](alb1.jpg", result);
+        Assert.Contains("![alb2.jpg](alb2.jpg", result);
+        Assert.Contains("![alb3.jpg](alb3.jpg", result);
     }
 
     [Fact]
@@ -279,7 +279,51 @@ public sealed class DocumentationServiceTests
     public void Render_FileListLine_HasTypeAndSize()
     {
         var result = Render(new[] { Record(1, 1, "clip.mp4", type: "Video", size: 2048) }, null);
-        Assert.Contains("[clip.mp4](clip.mp4) — Video · 2 KB", result);
+        Assert.Contains("- 🎬 [clip.mp4](clip.mp4 \"clip.mp4 · 2 KB\") — Video · 2 KB", result);
+    }
+
+    // --- Galeri media: Markdown natif (foto inline, video/file tautan berikon) ---
+
+    [Fact]
+    public void Render_Photo_EmbeddedAsNativeMarkdownImage()
+    {
+        var result = Render(new[] { Record(1, 1, "pic.jpg", type: "Photo") }, null);
+
+        // Gambar Markdown natif dengan title (tooltip) + lebar terbatas → ter-render
+        // di penampil in-app maupun Markdown eksternal (portabel).
+        Assert.Contains("![pic.jpg](pic.jpg \"pic.jpg · 1 KB\"){width=180px}", result);
+        // Foto tidak ditulis sebagai baris daftar tautan terpisah.
+        Assert.DoesNotContain("- 📄 [pic.jpg]", result);
+        Assert.DoesNotContain("<video", result);
+    }
+
+    [Fact]
+    public void Render_Video_RenderedAsIconLink_NotHtmlTag()
+    {
+        var result = Render(new[] { Record(1, 1, "clip.mp4", type: "Video") }, null);
+
+        // Tautan Markdown berikon (tidak ada sintaks <video> natif yang portabel).
+        Assert.Contains("- 🎬 [clip.mp4](clip.mp4 \"clip.mp4 · 1 KB\") — Video · 1 KB", result);
+        Assert.DoesNotContain("<video", result);
+    }
+
+    [Fact]
+    public void Render_File_RenderedAsIconLink_NotEmbedded()
+    {
+        var result = Render(new[] { Record(1, 1, "doc.pdf", type: "File") }, null);
+
+        Assert.DoesNotContain("![doc.pdf]", result);
+        Assert.DoesNotContain("<video", result);
+        Assert.Contains("- 📄 [doc.pdf](doc.pdf \"doc.pdf · 1 KB\") — File · 1 KB", result);
+    }
+
+    [Fact]
+    public void Render_PhotoFileNameWithSpaces_LinkEncoded()
+    {
+        var result = Render(new[] { Record(1, 1, "my photo.jpg", type: "Photo") }, null);
+
+        // Spasi di-encode pada link gambar natif.
+        Assert.Contains("![my photo.jpg](my%20photo.jpg \"", result);
     }
 
     // --- DocumentationService (IO wrapper) --------------------------------
