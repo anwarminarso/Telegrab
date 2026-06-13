@@ -410,7 +410,7 @@ Test “pass” **tidak** membuktikan aplikasi aman di production Telegram nyata
 
 ---
 
-## Kesimpulan Jujur
+## Kesimpulan
 
 Kode menunjukkan **engineering yang thoughtful** (B2 key lock, B4 RootSwitched, P2 manifest off UI thread, debounce README). Tapi aplikasi ini **belum production-hardened** untuk pengguna berat: kolisi folder by title, celah lifecycle root vs unduhan langsung, cancel palsu, dan performa O(n) di manifest/README akan muncul di skenario nyata — **bukan** di unit test.
 
