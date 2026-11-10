@@ -125,7 +125,7 @@ public class TelegramService : IDisposable
         try
         {
             await ThrottleThumbnailAsync(ct);
-            await Client.DownloadProfilePhotoAsync(peer, ms, false, false);
+            await WithTimeoutAsync(Client.DownloadProfilePhotoAsync(peer, ms, false, false), ThumbnailTimeout, ct);
         }
         catch
         {
@@ -556,13 +556,13 @@ public class TelegramService : IDisposable
             {
                 var thumb = PickThumb(photo.sizes);
                 if (thumb == null) return null;
-                await Client.DownloadFileAsync(photo, ms, thumb);
+                await WithTimeoutAsync(Client.DownloadFileAsync(photo, ms, thumb), ThumbnailTimeout, ct);
             }
             else if (part.Document is { } doc)
             {
                 var thumb = PickThumb(doc.thumbs);
                 if (thumb == null) return null;
-                await Client.DownloadFileAsync(doc, ms, thumb);
+                await WithTimeoutAsync(Client.DownloadFileAsync(doc, ms, thumb), ThumbnailTimeout, ct);
             }
             else
             {
@@ -626,11 +626,6 @@ public class TelegramService : IDisposable
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
 
-        void Report(long done, long total)
-        {
-            if (total > 0) progress?.Report((double)done / total);
-        }
-
         Interlocked.Increment(ref _activeDownloads);
         try
         {
@@ -639,13 +634,7 @@ public class TelegramService : IDisposable
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    await using (var fs = File.Create(destinationPath))
-                    {
-                        if (part.Photo is { } photo)
-                            await Client.DownloadFileAsync(photo, fs, (PhotoSizeBase?)null, Report);
-                        else if (part.Document is { } doc)
-                            await Client.DownloadFileAsync(doc, fs, (PhotoSizeBase?)null, Report);
-                    }
+                    await DownloadAttemptAsync(part, destinationPath, progress, ct);
                     return destinationPath;
                 }
                 catch (RpcException ex) when (TryGetFloodWait(ex, out var seconds))
@@ -666,6 +655,120 @@ public class TelegramService : IDisposable
         {
             Interlocked.Decrement(ref _activeDownloads);
         }
+    }
+
+    /// <summary>Batas tanpa data masuk sebelum unduhan dianggap macet dan dihentikan.</summary>
+    // Harus > Client.FloodRetryThreshold (default 60 dtk): WTelegram menunggu FLOOD_WAIT ≤60 dtk
+    // secara internal tanpa memanggil progress, jadi batas 60 dtk akan salah menganggapnya macet.
+    private static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(120);
+
+    /// <summary>
+    /// Batas waktu satu permintaan thumbnail. WTelegram hanya punya 2 slot transfer paralel
+    /// (dipakai bersama unduhan penuh) dan tidak menerima CancellationToken; tanpa batas ini,
+    /// thumbnail yang macet menahan slot gate thumbnail selamanya sehingga thumbnail berhenti dimuat.
+    /// </summary>
+    private static readonly TimeSpan ThumbnailTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>Tunggu transfer WTelegram dengan batas waktu; task yang ditinggal diamati agar tidak bocor exception.</summary>
+    private static async Task WithTimeoutAsync(Task transfer, TimeSpan timeout, CancellationToken ct)
+    {
+        try
+        {
+            await transfer.WaitAsync(timeout, ct);
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        {
+            _ = transfer.ContinueWith(t => _ = t.Exception,
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Satu percobaan unduh yang BISA DIBATALKAN. <c>Client.DownloadFileAsync</c> (WTelegram) tidak
+    /// menerima CancellationToken, sehingga dulu tombol Cancel tak berefek dan koneksi yang macet
+    /// membuat antrian membeku selamanya. Di sini:
+    /// <list type="bullet">
+    ///   <item>callback progress melempar saat dibatalkan → WTelegram berhenti meminta chunk;</item>
+    ///   <item><c>WaitAsync</c> melepas penantian segera saat Cancel / macet, meski tak ada chunk masuk;</item>
+    ///   <item>watchdog membatalkan bila tak ada data selama <see cref="StallTimeout"/> →
+    ///         <see cref="TimeoutException"/> (job Failed, antrian lanjut ke media berikutnya).</item>
+    /// </list>
+    /// </summary>
+    private async Task DownloadAttemptAsync(
+        MediaPart part, string destinationPath, IProgress<double>? progress, CancellationToken ct)
+    {
+        var watch = new StallWatch();
+        using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var token = attemptCts.Token;
+        var monitor = MonitorStallAsync(watch, attemptCts);
+
+        void Report(long done, long total)
+        {
+            watch.Touch();
+            token.ThrowIfCancellationRequested();
+            if (total > 0) progress?.Report((double)done / total);
+        }
+
+        try
+        {
+            await using var fs = File.Create(destinationPath);
+            Task download = part.Photo is { } photo
+                ? Client.DownloadFileAsync(photo, fs, (PhotoSizeBase?)null, Report)
+                : part.Document is { } doc
+                    ? Client.DownloadFileAsync(doc, fs, (PhotoSizeBase?)null, Report)
+                    : Task.CompletedTask;
+
+            try
+            {
+                await download.WaitAsync(token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Task WTelegram yang ditinggal akan gagal sendiri (stream ditutup / callback
+                // melempar); amati exception-nya agar tidak jadi UnobservedTaskException.
+                _ = download.ContinueWith(t => _ = t.Exception,
+                    CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+
+                if (!ct.IsCancellationRequested)
+                    throw new TimeoutException(
+                        $"Download stalled: no data received for {StallTimeout.TotalSeconds:0} seconds.");
+                throw;
+            }
+        }
+        finally
+        {
+            attemptCts.Cancel();
+            await monitor;
+        }
+    }
+
+    private static async Task MonitorStallAsync(StallWatch watch, CancellationTokenSource attemptCts)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), attemptCts.Token);
+                if (watch.Idle > StallTimeout)
+                {
+                    attemptCts.Cancel();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // percobaan selesai / dibatalkan
+        }
+    }
+
+    /// <summary>Stempel waktu data terakhir diterima (thread-safe).</summary>
+    private sealed class StallWatch
+    {
+        private long _lastTick = Environment.TickCount64;
+        public void Touch() => Interlocked.Exchange(ref _lastTick, Environment.TickCount64);
+        public TimeSpan Idle => TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastTick));
     }
 
     /// <summary>Deteksi error FLOOD_WAIT_x / FLOOD_PREMIUM_WAIT_x dan ambil detik tunggunya.</summary>

@@ -35,6 +35,7 @@ public partial class DownloadQueueService : ObservableObject
     // tumbuh tanpa batas pada batch besar (mis. unduh ribuan media). Job yang dipangkas tetap
     // dihitung lewat _prunedDone sehingga ringkasan tetap akurat.
     private const int MaxFinishedRetained = 100;
+    private const int PruneSlack = 50;
     private int _prunedDone;
 
     // Kunci per-media untuk menserialkan unduhan media yang SAMA (B2). Tanpa ini, worker antrian
@@ -90,22 +91,91 @@ public partial class DownloadQueueService : ObservableObject
         // Strict gating: tanpa DB siap, tolak seluruh operasi dengan pesan jelas.
         EnsureReady();
 
-        int added = 0;
+        var candidates = FilterCandidates(parts);
+        var downloaded = new List<(MediaPart Part, string Path)>();
+        var pending = new List<MediaPart>();
+        foreach (var part in candidates)
+        {
+            if (_db.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
+                downloaded.Add((part, existing));
+            else
+                pending.Add(part);
+        }
+        return ApplyEnqueue(downloaded, pending, ctx);
+    }
+
+    /// <summary>
+    /// Versi async <see cref="Enqueue"/> untuk batch besar ("Download all"). Pengecekan manifest
+    /// (query SQLite + <c>File.Exists</c> per media) dijalankan di thread pool. Dulu seluruhnya
+    /// sinkron di UI thread, plus pemindaian <c>Jobs</c> O(n²), sehingga grup dengan ribuan media
+    /// membekukan jendela. Harus dipanggil dari UI thread (Jobs dimutasi setelah await).
+    /// </summary>
+    public async Task<int> EnqueueAsync(IEnumerable<MediaPart> parts, DownloadContext ctx)
+    {
+        EnsureReady();
+
+        // Filter berbasis state UI (IsDownloaded, job aktif) tetap di UI thread.
+        var candidates = FilterCandidates(parts);
+        if (candidates.Count == 0) return 0;
+
+        var (downloaded, pending) = await Task.Run(() =>
+        {
+            var hits = new List<(MediaPart Part, string Path)>();
+            var misses = new List<MediaPart>();
+            foreach (var part in candidates)
+            {
+                if (!_db.IsReady) break; // root diganti di tengah jalan
+                if (_db.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
+                    hits.Add((part, existing));
+                else
+                    misses.Add(part);
+            }
+            return (hits, misses);
+        });
+
+        EnsureReady();
+        return ApplyEnqueue(downloaded, pending, ctx);
+    }
+
+    /// <summary>Saring media yang perlu dicek: belum terunduh, punya MediaId, dan belum punya job aktif.</summary>
+    private List<MediaPart> FilterCandidates(IEnumerable<MediaPart> parts)
+    {
+        // HashSet job aktif: O(1) per media (dulu Jobs.Any per media → O(n²)).
+        var active = new HashSet<MediaPart>(ReferenceEqualityComparer.Instance);
+        foreach (var j in Jobs)
+            if (j.CanCancel) active.Add(j.Part);
+
+        var result = new List<MediaPart>();
         foreach (var part in parts)
         {
             if (part.IsDownloaded) continue;
             // MediaId == 0 = sentinel (tak ada id foto/dokumen). Tidak dapat dilacak andal di
             // manifest (kunci chat,message,media bisa bertabrakan), jadi dilewati.
             if (part.MediaId == 0) continue;
-            if (_db.IsDownloaded(ctx.ChatId, part.MessageId, part.MediaId, out var existing))
-            {
-                part.IsDownloaded = true;
-                part.LocalPath = existing;
-                continue;
-            }
-            // Hindari duplikat job yang masih aktif untuk media yang sama.
-            if (Jobs.Any(j => ReferenceEquals(j.Part, part) && j.CanCancel)) continue;
+            if (!active.Add(part)) continue; // duplikat (job aktif / muncul dua kali di input)
+            result.Add(part);
+        }
+        return result;
+    }
 
+    /// <summary>Terapkan hasil pengecekan manifest (UI thread): tandai yang sudah ada, antrikan sisanya.</summary>
+    private int ApplyEnqueue(List<(MediaPart Part, string Path)> downloaded, List<MediaPart> pending, DownloadContext ctx)
+    {
+        foreach (var (part, path) in downloaded)
+        {
+            part.IsDownloaded = true;
+            part.LocalPath = path;
+        }
+
+        // Cek ulang job aktif: bisa saja ada job baru masuk selama await di EnqueueAsync.
+        var active = new HashSet<MediaPart>(ReferenceEqualityComparer.Instance);
+        foreach (var j in Jobs)
+            if (j.CanCancel) active.Add(j.Part);
+
+        int added = 0;
+        foreach (var part in pending)
+        {
+            if (part.IsDownloaded || !active.Add(part)) continue;
             var job = new DownloadJob { Part = part, Context = ctx };
             Jobs.Add(job);
             _channel.Writer.TryWrite(job);
@@ -152,14 +222,28 @@ public partial class DownloadQueueService : ObservableObject
     public void CancelAll()
     {
         foreach (var job in Jobs)
-        {
-            if (job.CanCancel) job.Cts.Cancel();
-        }
+            CancelCore(job);
+        RefreshSummary();
     }
 
     public void Cancel(DownloadJob job)
     {
-        if (job.CanCancel) job.Cts.Cancel();
+        CancelCore(job);
+        RefreshSummary();
+    }
+
+    /// <summary>
+    /// Batalkan job (dipanggil di UI thread). Job yang masih ANTRI langsung ditandai Canceled agar
+    /// UI segera bereaksi; sebelumnya status baru berubah saat worker sampai ke job tersebut,
+    /// sehingga Cancel tampak "tidak berfungsi" selama ada unduhan lain yang berjalan/macet.
+    /// Worker tetap melewatinya karena token-nya sudah dibatalkan.
+    /// </summary>
+    private static void CancelCore(DownloadJob job)
+    {
+        if (!job.CanCancel) return;
+        job.Cts.Cancel();
+        if (job.State == DownloadState.Queued)
+            job.State = DownloadState.Canceled;
     }
 
     private void EnsureWorker()
@@ -175,7 +259,10 @@ public partial class DownloadQueueService : ObservableObject
     {
         await foreach (var job in _channel.Reader.ReadAllAsync())
         {
-            await ProcessJobAsync(job);
+            // Pengaman: exception apa pun tidak boleh mematikan worker, karena job sisanya akan
+            // tertahan "Queued" selamanya (gejala antrian beku).
+            try { await ProcessJobAsync(job); }
+            catch (Exception ex) { CrashLog.Write("DownloadQueue.ProcessJob", ex); }
         }
     }
 
@@ -188,14 +275,25 @@ public partial class DownloadQueueService : ObservableObject
             return;
         }
 
-        UpdateJob(job, j => { j.State = DownloadState.Downloading; j.Progress = 0; });
-        SetRunning(true);
+        // Jangan timpa Canceled yang baru saja di-set UI (Cancel tepat saat job diambil worker).
+        UpdateJob(job, j =>
+        {
+            if (j.State != DownloadState.Queued) return;
+            j.State = DownloadState.Downloading;
+            j.Progress = 0;
+        });
         RefreshSummary();
 
         try
         {
-            await DownloadOneAsync(job.Part, job.Context, new ProgressTo(job, this), job, job.Cts.Token);
-            UpdateJob(job, j => { j.State = DownloadState.Completed; j.Progress = 1; });
+            await DownloadOneAsync(job.Part, job.Context, new ProgressTo(job), job, job.Cts.Token);
+            // DownloadOneAsync bisa menandai job Skipped (sudah ada di manifest); jangan ditimpa
+            // jadi Completed. Aman karena dispatch UI diproses berurutan.
+            UpdateJob(job, j =>
+            {
+                if (j.State != DownloadState.Skipped) j.State = DownloadState.Completed;
+                j.Progress = 1;
+            });
         }
         catch (OperationCanceledException)
         {
@@ -207,8 +305,10 @@ public partial class DownloadQueueService : ObservableObject
         }
         finally
         {
-            if (!Jobs.Any(j => j.IsActive || j.State == DownloadState.Queued))
-                SetRunning(false);
+            // JANGAN membaca Jobs di sini: method ini berjalan di thread pool, sedangkan Jobs
+            // dimutasi di UI thread. Enumerasi lintas thread dapat melempar "Collection was
+            // modified" dan mematikan worker diam-diam (antrian macet). IsRunning kini dihitung
+            // di RefreshSummary (UI thread).
             RefreshSummary();
         }
     }
@@ -382,9 +482,6 @@ public partial class DownloadQueueService : ObservableObject
     private static void UpdateJob(DownloadJob job, Action<DownloadJob> apply)
         => MainThread.BeginInvokeOnMainThread(() => apply(job));
 
-    private void SetRunning(bool value)
-        => MainThread.BeginInvokeOnMainThread(() => IsRunning = value);
-
     private void RefreshSummary()
     {
         MainThread.BeginInvokeOnMainThread(() =>
@@ -398,6 +495,7 @@ public partial class DownloadQueueService : ObservableObject
             int active = Jobs.Count(j => j.IsActive);
 
             HasJobs = Jobs.Count > 0;
+            IsRunning = active > 0 || pending > 0;
 
             var parts = new List<string>();
             if (active > 0) parts.Add($"{active} running");
@@ -430,8 +528,11 @@ public partial class DownloadQueueService : ObservableObject
             if (Jobs[i].State is DownloadState.Completed or DownloadState.Skipped)
                 finished++;
 
+        // Pangkas per-gelombang (histeresis), bukan satu item per job selesai. Penghapusan item
+        // di awal list setiap kali job selesai membuat CollectionView WinUI terus me-layout ulang
+        // dan rawan crash native (E_UNEXPECTED) pada batch besar.
+        if (finished <= MaxFinishedRetained + PruneSlack) return;
         int overflow = finished - MaxFinishedRetained;
-        if (overflow <= 0) return;
 
         for (int i = 0; i < Jobs.Count && overflow > 0;)
         {
@@ -475,18 +576,32 @@ public partial class DownloadQueueService : ObservableObject
         });
     }
 
-    /// <summary>Adapter IProgress yang memperbarui job & MediaPart di main thread.</summary>
+    /// <summary>
+    /// Adapter IProgress yang memperbarui job &amp; MediaPart di main thread. Dibatasi ke kenaikan
+    /// ≥1% agar callback per-chunk WTelegram tidak membanjiri dispatcher UI selama batch.
+    /// </summary>
     private sealed class ProgressTo : IProgress<double>
     {
+        private const double MinStep = 0.01;
         private readonly DownloadJob _job;
-        private readonly DownloadQueueService _owner;
-        public ProgressTo(DownloadJob job, DownloadQueueService owner) { _job = job; _owner = owner; }
+        private double _last = -1;
+
+        public ProgressTo(DownloadJob job) => _job = job;
 
         public void Report(double value)
-            => MainThread.BeginInvokeOnMainThread(() =>
+        {
+            // Nilai mundur (unduhan diulang setelah FLOOD_WAIT) tetap dilaporkan.
+            if (value < 1 && value >= _last && value - _last < MinStep) return;
+            _last = value;
+
+            MainThread.BeginInvokeOnMainThread(() =>
             {
+                // Data kembali mengalir setelah FLOOD_WAIT: pulihkan status agar tidak terus
+                // tertulis "Rate limited, waiting..." (tampak seperti macet).
+                if (_job.State == DownloadState.FloodWait) _job.State = DownloadState.Downloading;
                 _job.Progress = value;
                 _job.Part.Progress = value;
             });
+        }
     }
 }

@@ -12,6 +12,12 @@ public static class MauiProgram
 {
 	public static MauiApp CreateMauiApp()
 	{
+		// Catat exception tak tertangani (thread pool / task) ke crash.log untuk diagnosis.
+		AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+			CrashLog.Write("AppDomain.UnhandledException", e.ExceptionObject);
+		TaskScheduler.UnobservedTaskException += (_, e) =>
+			CrashLog.Write("TaskScheduler.UnobservedTaskException", e.Exception);
+
 		var builder = MauiApp.CreateBuilder();
 		builder
 			.UseMauiApp<App>()

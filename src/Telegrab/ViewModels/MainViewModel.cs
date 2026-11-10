@@ -28,6 +28,12 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>Maksimum unduhan thumbnail yang berjalan bersamaan (P3: paralel terbatas).</summary>
     private const int ThumbnailConcurrency = 4;
+
+    /// <summary>Gate thumbnail pesan, dibagi seluruh halaman yang termuat (lihat LoadThumbnailsAsync).</summary>
+    private readonly SemaphoreSlim _thumbGate = new(ThumbnailConcurrency);
+
+    /// <summary>True selama Download all sedang mengecek manifest (cegah klik ganda).</summary>
+    private bool _isQueueingAll;
     private TL.InputPeer? _currentPeer;
     private int? _currentTopicId;
     private int _oldestId;
@@ -546,10 +552,10 @@ public partial class MainViewModel : ObservableObject
         var parts = items.SelectMany(m => m.Media).Where(p => p.Thumbnail == null).ToList();
         if (parts.Count == 0) return;
 
-        // Paralel terbatas (P3): unduh beberapa thumbnail sekaligus. Throttle thumbnail di
-        // TelegramService tetap memprioritaskan unduhan file penuh.
-        using var gate = new SemaphoreSlim(ThumbnailConcurrency);
-        var tasks = parts.Select(p => LoadOneThumbnailAsync(p, gate, token));
+        // Paralel terbatas (P3) dengan gate BERSAMA lintas halaman: dahulu tiap Load More membuat
+        // gate sendiri, sehingga scroll cepat di grup besar menumpuk N halaman × 4 unduhan
+        // thumbnail sekaligus. Throttle di TelegramService tetap memprioritaskan unduhan penuh.
+        var tasks = parts.Select(p => LoadOneThumbnailAsync(p, _thumbGate, token));
         try { await Task.WhenAll(tasks); }
         catch (OperationCanceledException) { /* dibatalkan: abaikan */ }
     }
@@ -613,6 +619,10 @@ public partial class MainViewModel : ObservableObject
         {
             await ToastAsync(ex.Message);
         }
+        catch (Exception ex)
+        {
+            await ToastAsync($"Failed to queue downloads: {ex.Message}");
+        }
     }
 
     private bool CanDownloadAllLoaded() => !IsBusy && _currentPeer != null && Messages.Count > 0;
@@ -632,15 +642,31 @@ public partial class MainViewModel : ObservableObject
             return;
         }
         if (!await EnsureRootConfiguredAsync()) return;
-        var parts = Messages.SelectMany(m => m.Media);
+        if (_isQueueingAll) return; // klik ganda selagi pengecekan manifest berjalan
+        // Snapshot (ToList): Messages bisa bertambah (auto Load More) selama enumerasi.
+        var parts = Messages.SelectMany(m => m.Media).ToList();
+        _isQueueingAll = true;
+        Status = $"Checking {parts.Count} media against the manifest...";
         try
         {
-            var added = _queue.Enqueue(parts, CurrentContext());
-            await ToastAsync(added > 0 ? $"{added} media added to the queue." : "All media already downloaded.");
+            // Async: pengecekan manifest per media berjalan di thread pool agar UI tidak membeku.
+            var added = await _queue.EnqueueAsync(parts, CurrentContext());
+            Status = added > 0 ? $"{added} media added to the queue." : "All media already downloaded.";
+            await ToastAsync(Status);
         }
         catch (InvalidOperationException ex)
         {
             await ToastAsync(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            // Exception lain (mis. SqliteException) jangan sampai lolos dari command async:
+            // akan dilempar ulang di UI thread dan menutup aplikasi.
+            await ToastAsync($"Failed to queue downloads: {ex.Message}");
+        }
+        finally
+        {
+            _isQueueingAll = false;
         }
     }
 

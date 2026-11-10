@@ -144,7 +144,18 @@ public sealed class DocumentationService : IDisposable
                 timer.Dispose();
         }
 
-        RegenerateFolder(key);
+        // Callback Timer berjalan di thread pool: exception yang lolos di sini (mis. README
+        // terkunci aplikasi lain, IOException, SqliteException) akan MENUTUP proses. Regenerasi
+        // ter-debounce bersifat best-effort, jadi gagal = lewati; unduhan berikutnya / Rebuild
+        // akan menulis ulang.
+        try
+        {
+            RegenerateFolder(key);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Telegrab] README regeneration failed for '{key}': {ex}");
+        }
     }
 
     /// <summary>

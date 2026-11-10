@@ -13,7 +13,7 @@
 		<OutputType>Exe</OutputType>
 		<RootNamespace>Telegrab</RootNamespace>
 		<UseMaui>true</UseMaui>
-		<MauiVersion>10.0.60</MauiVersion>
+		<MauiVersion>10.0.120</MauiVersion>
 		<SingleProject>true</SingleProject>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
@@ -84,12 +84,12 @@
 		<PackageReference Include="CommunityToolkit.Maui" Version="15.0.1" />
 		<PackageReference Include="CommunityToolkit.Maui.MediaElement" Version="10.0.0" />
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-		<PackageReference Include="Markdig" Version="1.4.0" />
-		<PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
-		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.101" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.12" />
+		<PackageReference Include="Markdig" Version="1.5.1" />
+		<PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
+		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.14" />
 		<PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
-		<PackageReference Include="WTelegramClient" Version="4.4.8" />
+		<PackageReference Include="WTelegramClient" Version="4.4.9" />
 	</ItemGroup>
 
 </Project>

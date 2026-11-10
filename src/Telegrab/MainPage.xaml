@@ -4,6 +4,7 @@
              xmlns:local="clr-namespace:Telegrab"
              xmlns:models="clr-namespace:Telegrab.Models"
              xmlns:vm="clr-namespace:Telegrab.ViewModels"
+             xmlns:views="clr-namespace:Telegrab.Views"
              xmlns:mi="http://www.aathifmahir.com/dotnet/2022/maui/icons"
              x:Class="Telegrab.MainPage"
              x:Name="Page"
@@ -45,7 +46,7 @@
                                 </Border.Triggers>
                                 <Border.GestureRecognizers>
                                     <TapGestureRecognizer
-                                        Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.SelectChatCommand}"
+                                        Command="{Binding x:DataType='vm:MainViewModel', Source={RelativeSource AncestorType={x:Type vm:MainViewModel}}, Path=SelectChatCommand}"
                                         CommandParameter="{Binding .}" />
                                 </Border.GestureRecognizers>
 
@@ -90,7 +91,7 @@
                                             </Border.Triggers>
                                             <Border.GestureRecognizers>
                                                 <TapGestureRecognizer
-                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.SelectTopicCommand}"
+                                                    Command="{Binding x:DataType='vm:MainViewModel', Source={RelativeSource AncestorType={x:Type vm:MainViewModel}}, Path=SelectTopicCommand}"
                                                     CommandParameter="{Binding .}" />
                                             </Border.GestureRecognizers>
                                             <HorizontalStackLayout Spacing="8">
@@ -176,8 +177,10 @@
                                 <Label Text="{Binding Text}" IsVisible="{Binding HasText}"
                                        LineBreakMode="WordWrap" MaxLines="6" />
 
-                                <FlexLayout Wrap="Wrap" IsVisible="{Binding HasMedia}"
-                                            BindableLayout.ItemsSource="{Binding Media}">
+                                <!-- WrapLayout (bukan FlexLayout): FlexLayout+BindableLayout di item
+                                     CollectionView memicu layout cycle → crash saat scroll panjang (Windows). -->
+                                <views:WrapLayout IsVisible="{Binding HasMedia}"
+                                                  BindableLayout.ItemsSource="{Binding Media}">
                                     <BindableLayout.ItemTemplate>
                                         <DataTemplate x:DataType="models:MediaPart">
                                             <VerticalStackLayout Margin="0,4,8,0" WidthRequest="112" Spacing="4">
@@ -188,7 +191,7 @@
                                                         <Image Source="{Binding Thumbnail}" Aspect="AspectFill">
                                                             <Image.GestureRecognizers>
                                                                 <TapGestureRecognizer
-                                                                    Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.OpenPartCommand}"
+                                                                    Command="{Binding x:DataType='vm:MainViewModel', Source={RelativeSource AncestorType={x:Type vm:MainViewModel}}, Path=OpenPartCommand}"
                                                                     CommandParameter="{Binding .}" />
                                                             </Image.GestureRecognizers>
                                                         </Image>
@@ -208,7 +211,7 @@
                                                 <Button mi:MauiIcon.Value="{mi:Material Download}" Text="Download"
                                                         Style="{StaticResource GhostButton}"
                                                         FontSize="11" Padding="6,0" HeightRequest="32" MinimumHeightRequest="32"
-                                                        Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.DownloadPartCommand}"
+                                                        Command="{Binding x:DataType='vm:MainViewModel', Source={RelativeSource AncestorType={x:Type vm:MainViewModel}}, Path=DownloadPartCommand}"
                                                         CommandParameter="{Binding .}" />
                                                 <ProgressBar Progress="{Binding Progress}" IsVisible="{Binding IsDownloading}"
                                                              ProgressColor="{StaticResource Accent}" />
@@ -217,14 +220,14 @@
                                             </VerticalStackLayout>
                                         </DataTemplate>
                                     </BindableLayout.ItemTemplate>
-                                </FlexLayout>
+                                </views:WrapLayout>
 
                                 <Button mi:MauiIcon.Value="{mi:Material DownloadForOffline}" Text="Download all media"
                                         Style="{StaticResource GhostButton}"
                                         FontSize="11" Padding="10,4" MinimumHeightRequest="30" CornerRadius="9"
                                         HorizontalOptions="Start" Margin="0,4,0,0"
                                         IsVisible="{Binding IsAlbum}"
-                                        Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.DownloadMessageCommand}"
+                                        Command="{Binding x:DataType='vm:MainViewModel', Source={RelativeSource AncestorType={x:Type vm:MainViewModel}}, Path=DownloadMessageCommand}"
                                         CommandParameter="{Binding .}" />
                             </VerticalStackLayout>
                         </Border>
@@ -263,10 +266,13 @@
                                 Command="{Binding ClearFinishedJobsCommand}" />
                     </Grid>
 
-                    <CollectionView ItemsSource="{Binding Queue.Jobs}" MaximumHeightRequest="150">
+                    <!-- Tinggi item tetap + MeasureFirstItem: item tidak berubah ukuran saat ProgressBar
+                         muncul/hilang, mengurangi re-layout WinUI saat antrian besar berubah cepat. -->
+                    <CollectionView ItemsSource="{Binding Queue.Jobs}" MaximumHeightRequest="150"
+                                    ItemSizingStrategy="MeasureFirstItem">
                         <CollectionView.ItemTemplate>
                             <DataTemplate x:DataType="models:DownloadJob">
-                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" Padding="0,3">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" Padding="0,3" HeightRequest="52">
                                     <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
                                         <Label Text="{Binding FileName}" FontSize="12"
                                                LineBreakMode="MiddleTruncation" />
@@ -275,10 +281,14 @@
                                         <ProgressBar Progress="{Binding Progress}" IsVisible="{Binding IsActive}"
                                                      ProgressColor="{StaticResource Accent}" />
                                     </VerticalStackLayout>
+                                    <!-- Override ukuran IconSubtleButton (46x46) agar proporsional dengan baris antrian. -->
                                     <Button Grid.Column="1" mi:MauiIcon.Value="{mi:Material Close}"
                                             Style="{StaticResource IconSubtleButton}"
+                                            WidthRequest="28" HeightRequest="28"
+                                            MinimumWidthRequest="28" MinimumHeightRequest="28"
+                                            CornerRadius="8" FontSize="13" VerticalOptions="Center"
                                             IsVisible="{Binding CanCancel}"
-                                            Command="{Binding Source={RelativeSource AncestorType={x:Type local:MainPage}}, Path=BindingContext.CancelJobCommand}"
+                                            Command="{Binding x:DataType='vm:MainViewModel', Source={RelativeSource AncestorType={x:Type vm:MainViewModel}}, Path=CancelJobCommand}"
                                             CommandParameter="{Binding .}"
                                             SemanticProperties.Description="Cancel this download" />
                                 </Grid>
